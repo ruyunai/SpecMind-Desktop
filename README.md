@@ -6,7 +6,7 @@
 
 将脏销售需求（微信记录 / 口头承诺 / 文档）在 **15 分钟** 内转化为可落地的标准化 PRD + 报价 + 合同比对 + 评审 + 交付计划
 
-[![Release](https://img.shields.io/badge/版本-v0.1.1-blue)](https://github.com/ruyunai/SpecMind-Desktop/releases)
+[![Release](https://img.shields.io/badge/版本-v0.2.0-blue)](https://github.com/ruyunai/SpecMind-Desktop/releases)
 [![Platform](https://img.shields.io/badge/平台-Windows%2010%2F11-brightgreen)](https://github.com/ruyunai/SpecMind-Desktop/releases)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
@@ -19,7 +19,7 @@
 | 项目 | 说明 |
 |------|------|
 | **下载链接** | [SpecMindDesktop.exe](https://github.com/ruyunai/SpecMind-Desktop/releases/latest/download/SpecMindDesktop.exe) |
-| **文件大小** | 98.55 MB |
+| **文件大小** | 108.67 MB |
 | **系统要求** | Windows 10 / 11 64 位 |
 | **无需安装** | 双击即用，无需 Python 或任何依赖 |
 
@@ -167,6 +167,19 @@ pyinstaller --noconfirm SpecMindDesktop.spec
 ---
 
 ## 📝 版本历史
+
+### v0.2.0（2026-07-14）
+
+**架构升级 + 人工测试迭代修复**
+
+- 🔧 **核心架构变更**：LLM 知识为主 + 企业资产库为辅（替代原 RAG 强约束设计）
+- 📄 **文档解析增强**：docx 表格提取 + pdf 换用 pdfplumber（表格还原准确率 90%+）
+- 🖥️ **UI 优化**：Interrupt 阻断弹窗改为可滚动自定义对话框
+- 🐛 修复 BUG-023 ~ BUG-029 共 7 项（1 致命 + 6 高危）
+- 左栏资产库补充「历史 PRD」「通用文档」分类
+- 交付计划渲染崩溃修复 + JSON 输出残留清理
+
+详见 [Release v0.2.0](https://github.com/ruyunai/SpecMind-Desktop/releases/tag/v0.2.0)。
 
 ### v0.1.1（2026-07-14）
 
