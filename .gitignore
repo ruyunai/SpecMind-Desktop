@@ -29,6 +29,8 @@ logs/
 *.keyseed
 secrets.enc
 .env
+config/app.json
+config/secrets.enc
 
 # PyInstaller
 *.spec.bak

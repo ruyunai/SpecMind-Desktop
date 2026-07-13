@@ -1,0 +1,58 @@
+{
+  "global_base_url": "https://api.deepseek.com/v1",
+  "global_api_key_enc": "",
+  "embedding_model": "BAAI/bge-m3",
+  "data_dir": "",
+  "agents": {
+    "sar": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "legal": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "pm": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "commercial": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "contract": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "review": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    },
+    "planner": {
+      "model": "deepseek-chat",
+      "api_key_enc": "",
+      "base_url": "",
+      "use_global_key": true
+    }
+  },
+  "cost": {
+    "person_day_rate": 3000,
+    "days_per_std_feature": 15,
+    "custom_multiplier": 2.0,
+    "margin_rate": 0.4,
+    "maintenance_rate": 0.1,
+    "project_months": 3
+  }
+}
