@@ -9,9 +9,16 @@
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 # 项目根目录
 PROJ_ROOT = Path(SPECPATH)  # SPECPATH 由 PyInstaller 提供 = .spec 所在目录
+
+# ---- 自动收集 chromadb 全部子模块/数据/二进制 ----
+# chromadb 内部有大量动态导入（posthog/telemetry/onnx 等），
+# 手动列举 hiddenimports 容易遗漏，用 collect_all 一次性收集
+chromadb_datas, chromadb_binaries, chromadb_hiddenimports = collect_all('chromadb')
+pdfplumber_datas, pdfplumber_binaries, pdfplumber_hiddenimports = collect_all('pdfplumber')
 
 # ---- 基础配置 ----
 a = Analysis(
@@ -19,14 +26,14 @@ a = Analysis(
     [str(PROJ_ROOT / "src" / "main.py")],
     pathex=[str(PROJ_ROOT / "src")],
 
-    # 二进制文件
-    binaries=[],
+    # 二进制文件（含 chromadb/pdfplumber 自动收集的二进制）
+    binaries=chromadb_binaries + pdfplumber_binaries,
 
-    # 数据文件：QSS 主题
+    # 数据文件：QSS 主题 + chromadb/pdfplumber 数据
     datas=[
         (str(PROJ_ROOT / "src" / "gui" / "styles" / "dark_theme.qss"),
          "gui/styles"),
-    ],
+    ] + chromadb_datas + pdfplumber_datas,
 
     # 隐性导入（PyInstaller 无法自动探测的模块）
     hiddenimports=[
@@ -55,7 +62,7 @@ a = Analysis(
         "langchain_core",
         "langchain_core.messages",
 
-        # --- ChromaDB 内部依赖 ---
+        # --- ChromaDB 内部依赖（含 posthog 遥测模块，禁用但仍需打包避免 ImportError）---
         "chromadb",
         "chromadb.db",
         "chromadb.db.impl",
@@ -67,6 +74,7 @@ a = Analysis(
         "chromadb.segment.impl.metadata",
         "chromadb.telemetry",
         "chromadb.telemetry.product",
+        "chromadb.telemetry.product.posthog",
         "chromadb.utils",
         "chromadb.utils.embedding_functions",
         "chromadb.api",
@@ -108,6 +116,11 @@ a = Analysis(
         "docx.opc",
         "docx.opc.constants",
         "PyPDF2",
+        "pdfplumber",
+        "pdfplumber.utils",
+        "pdfminer",
+        "pdfminer.high_level",
+        "pdfminer.layout",
 
         # --- 项目内部模块 ---
         "core",
@@ -142,6 +155,10 @@ a = Analysis(
         "gui.dialogs",
         "gui.dialogs.model_config_dialog",
         "gui.dialogs.asset_detail_dialog",
+        "gui.dialogs.upload_dialog",
+        "gui.dialogs.interrupt_dialog",
+        "gui.services",
+        "gui.services.upload_service",
 
         # --- 标准库（有时会被遗漏）---
         "sqlite3",
@@ -155,7 +172,7 @@ a = Analysis(
         "queue",
         "typing",
         "typing_extensions",
-    ],
+    ] + chromadb_hiddenimports + pdfplumber_hiddenimports,
 
     # 钩子目录（自定义钩子放这里）
     hookspath=[],
