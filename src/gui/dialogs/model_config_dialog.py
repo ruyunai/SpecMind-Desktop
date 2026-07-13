@@ -1,11 +1,8 @@
-"""模型配置对话框 - 可视化输入切换每个 Agent 的 LLM。
+"""模型配置对话框 - LLM 模型路由 + 成本参数配置。
 
-功能：
-- 全局 API Key / Base URL 输入（加密存储）
-- 7 个 Agent 各自的模型选择（下拉 + 自由输入）
-- 每 Agent 可选独立 API Key / Base URL，或用全局
-- 预设路由一键应用（混合/Qwen/DeepSeek/GLM）
-- 保存后写入 config，运行时生效
+两个 Tab：
+  Tab 1「LLM 模型」：全局 API Key / 预设路由 / 各 Agent 独立模型配置
+  Tab 2「成本参数」：人天费率 / 功能工期 / 定制倍率 / 毛利率 / 维护费率
 """
 from PySide6.QtWidgets import (
     QDialog,
@@ -22,6 +19,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QTabWidget,
+    QWidget,
+    QSpinBox,
+    QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt
 
@@ -30,6 +31,7 @@ from core.config import (
     AGENT_KEYS,
     PRESET_ROUTING,
     COMMON_MODELS,
+    CostConfig,
     reload_config,
 )
 from core.crypto import get_crypto
@@ -48,19 +50,50 @@ AGENT_LABELS = {
 
 
 class ModelConfigDialog(QDialog):
-    """模型配置对话框。"""
+    """模型配置对话框（LLM + 成本参数双 Tab）。"""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("模型配置 - 各 Agent LLM 可视化切换")
-        self.resize(900, 600)
+        self.setWindowTitle("模型配置")
+        self.resize(900, 650)
         self.config = AppConfig.load()
         self._init_ui()
         self._load_config()
 
+    # ---- UI 初始化 ----
+
     def _init_ui(self) -> None:
-        """初始化界面。"""
+        """初始化双 Tab 界面。"""
         layout = QVBoxLayout(self)
+
+        tabs = QTabWidget()
+
+        # Tab 1: LLM 模型配置
+        llm_tab = self._build_llm_tab()
+        tabs.addTab(llm_tab, "LLM 模型")
+
+        # Tab 2: 成本参数
+        cost_tab = self._build_cost_tab()
+        tabs.addTab(cost_tab, "成本参数")
+
+        layout.addWidget(tabs)
+
+        # 保存/取消
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("保存配置")
+        save_btn.setObjectName("primaryBtn")
+        save_btn.clicked.connect(self._on_save)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def _build_llm_tab(self) -> QWidget:
+        """构建 LLM 模型 Tab。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
 
         # 全局配置区
         global_group = QGroupBox("全局配置（默认所有 Agent 共用）")
@@ -88,8 +121,7 @@ class ModelConfigDialog(QDialog):
         agent_group = QGroupBox("各 Agent 模型配置（可独立设置 API Key/Base URL）")
         agent_layout = QVBoxLayout(agent_group)
 
-        # 提示：模型可自定义输入
-        tip_label = QLabel("提示：模型名称支持自由输入，可从下拉列表选择常用模型，也可直接输入任意模型名（如其他硅基流动模型/自建模型）")
+        tip_label = QLabel("提示：模型名称支持自由输入，可从下拉列表选择常用模型，也可直接输入任意模型名")
         tip_label.setObjectName("tipLabel")
         tip_label.setWordWrap(True)
         agent_layout.addWidget(tip_label)
@@ -107,49 +139,118 @@ class ModelConfigDialog(QDialog):
         agent_layout.addWidget(self.table)
         layout.addWidget(agent_group)
 
-        # 保存/取消
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        save_btn = QPushButton("保存配置")
-        save_btn.setObjectName("primaryBtn")
-        save_btn.clicked.connect(self._on_save)
-        cancel_btn = QPushButton("取消")
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
+        return tab
+
+    def _build_cost_tab(self) -> QWidget:
+        """构建成本参数 Tab。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 说明
+        tip = QLabel(
+            "调整以下参数将影响 Commercial Agent 的报价计算。\n"
+            "不同公司/不同项目类型可灵活配置，保存后立即生效。"
+        )
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        # 成本参数表单
+        cost_group = QGroupBox("报价成本参数")
+        form = QFormLayout(cost_group)
+
+        # 人天费率
+        self.cost_pd_rate = QSpinBox()
+        self.cost_pd_rate.setRange(500, 20000)
+        self.cost_pd_rate.setSuffix(" 元/人天")
+        self.cost_pd_rate.setValue(3000)
+        form.addRow("人天费率:", self.cost_pd_rate)
+
+        # 标准功能人天
+        self.cost_days_std = QSpinBox()
+        self.cost_days_std.setRange(1, 60)
+        self.cost_days_std.setSuffix(" 人天/功能")
+        self.cost_days_std.setValue(15)
+        form.addRow("标准功能工期:", self.cost_days_std)
+
+        # 定制功能倍率
+        self.cost_custom_mul = QDoubleSpinBox()
+        self.cost_custom_mul.setRange(1.0, 10.0)
+        self.cost_custom_mul.setSingleStep(0.5)
+        self.cost_custom_mul.setSuffix(" x")
+        self.cost_custom_mul.setValue(2.0)
+        form.addRow("定制功能倍率:", self.cost_custom_mul)
+
+        # 毛利率
+        self.cost_margin = QDoubleSpinBox()
+        self.cost_margin.setRange(0.0, 0.90)
+        self.cost_margin.setSingleStep(0.05)
+        self.cost_margin.setDecimals(2)
+        self.cost_margin.setSuffix(" (40% = 0.40)")
+        self.cost_margin.setValue(0.40)
+        form.addRow("毛利率:", self.cost_margin)
+
+        # 维护费率
+        self.cost_maint = QDoubleSpinBox()
+        self.cost_maint.setRange(0.0, 0.50)
+        self.cost_maint.setSingleStep(0.05)
+        self.cost_maint.setDecimals(2)
+        self.cost_maint.setSuffix(" (10% = 0.10)")
+        self.cost_maint.setValue(0.10)
+        form.addRow("维护费率:", self.cost_maint)
+
+        # 项目周期
+        self.cost_months = QSpinBox()
+        self.cost_months.setRange(1, 36)
+        self.cost_months.setSuffix(" 月")
+        self.cost_months.setValue(3)
+        form.addRow("项目周期:", self.cost_months)
+
+        layout.addWidget(cost_group)
+
+        # 公式说明
+        formula_label = QLabel(
+            "报价公式：\n"
+            "  标准版 = 所有标准功能 + 定制功能\n"
+            "  裁剪版 = 核心标准功能（前 60%）\n"
+            "  人天 = Σ(标准功能×工期) + Σ(定制功能×工期×倍率)\n"
+            "  开发费 = 人天 × 人天费率\n"
+            "  维护费 = 开发费 × 维护费率\n"
+            "  毛利 = 开发费 × 毛利率"
+        )
+        formula_label.setObjectName("tipLabel")
+        formula_label.setWordWrap(True)
+        layout.addWidget(formula_label)
+
+        layout.addStretch()
+        return tab
+
+    # ---- Agent 表格 ----
 
     def _fill_agent_rows(self) -> None:
         """填充表格行（控件）。"""
         for row, key in enumerate(AGENT_KEYS):
-            # Agent 名称（只读）
             name_item = QTableWidgetItem(AGENT_LABELS.get(key, key))
             name_item.setFlags(Qt.ItemIsEnabled)
             self.table.setItem(row, 0, name_item)
 
-            # 模型选择（可编辑下拉 + 自定义输入）
             combo = QComboBox()
             combo.setEditable(True)
             combo.setInsertPolicy(QComboBox.NoInsert)
             combo.addItems(COMMON_MODELS)
-            # 设置当前默认模型
             combo.setCurrentText(COMMON_MODELS[0])
             self.table.setCellWidget(row, 1, combo)
 
-            # 用全局 Key 复选框
             check = QCheckBox()
             check.setChecked(True)
             check.stateChanged.connect(lambda state, r=row: self._on_toggle_global_key(r, state))
             self.table.setCellWidget(row, 2, check)
 
-            # 独立 API Key
             key_input = QLineEdit()
             key_input.setEchoMode(QLineEdit.Password)
             key_input.setPlaceholderText("留空则用全局 Key")
             key_input.setEnabled(False)
             self.table.setCellWidget(row, 3, key_input)
 
-            # 独立 Base URL
             url_input = QLineEdit()
             url_input.setPlaceholderText("留空则用全局 URL")
             self.table.setCellWidget(row, 4, url_input)
@@ -170,9 +271,11 @@ class ModelConfigDialog(QDialog):
             else:
                 combo.setEditText(model)
 
+    # ---- 加载/保存 ----
+
     def _load_config(self) -> None:
         """从配置加载到界面。"""
-        # 全局 Key（显示掩码，实际值留空让用户重新输入或保留）
+        # 全局 Key
         if self.config.global_api_key_enc:
             self.global_key_input.setPlaceholderText("已存储（加密），重新输入可覆盖")
         self.global_url_input.setText(self.config.global_base_url)
@@ -195,9 +298,18 @@ class ModelConfigDialog(QDialog):
             url_input = self.table.cellWidget(row, 4)
             url_input.setText(agent.base_url)
 
+        # 成本参数
+        cost = self.config.cost
+        self.cost_pd_rate.setValue(cost.person_day_rate)
+        self.cost_days_std.setValue(cost.days_per_std_feature)
+        self.cost_custom_mul.setValue(cost.custom_multiplier)
+        self.cost_margin.setValue(cost.margin_rate)
+        self.cost_maint.setValue(cost.maintenance_rate)
+        self.cost_months.setValue(cost.project_months)
+
     def _on_save(self) -> None:
-        """保存配置。"""
-        # 全局
+        """保存配置（LLM + 成本参数）。"""
+        # 全局 LLM
         new_key = self.global_key_input.text().strip()
         if new_key:
             self.config.set_global_api_key(new_key)
@@ -220,7 +332,17 @@ class ModelConfigDialog(QDialog):
             agent.api_key_enc = get_crypto().encrypt(indep_key) if indep_key else ""
             agent.base_url = url_input.text().strip()
 
+        # 成本参数
+        self.config.cost = CostConfig(
+            person_day_rate=self.cost_pd_rate.value(),
+            days_per_std_feature=self.cost_days_std.value(),
+            custom_multiplier=self.cost_custom_mul.value(),
+            margin_rate=self.cost_margin.value(),
+            maintenance_rate=self.cost_maint.value(),
+            project_months=self.cost_months.value(),
+        )
+
         self.config.save()
         reload_config()
-        QMessageBox.information(self, "保存成功", "模型配置已保存（API Key 已加密存储）。")
+        QMessageBox.information(self, "保存成功", "模型配置 + 成本参数已保存。")
         self.accept()

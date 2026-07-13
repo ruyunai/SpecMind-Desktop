@@ -244,33 +244,84 @@ def pm_agent(state: SpecMindState) -> dict:
 
 
 # ============================================================
-# Commercial Agent - 双报价
+# Commercial Agent - 动态双报价（基于功能点 × 成本参数）
 # ============================================================
 def commercial_agent(state: SpecMindState) -> dict:
-    """Commercial Agent：基于功能点匹配成本模型，输出双报价。"""
-    logger.info("=" * 60)
-    logger.info("[Commercial Agent] 节点启动 - 双报价生成")
-    logger.info("[Commercial Agent] 输入: prd_features 数量=%d",
-                len(state.get("prd_features", [])))
+    """Commercial Agent：基于 PM 输出的 prd_features 和成本参数动态计算报价。
 
-    logger.info("[Commercial Agent] 加载成本模型...")
-    logger.info("[Commercial Agent] 人力成本: 3000元/人天 | 基础设施: 5000元/月 | 运维: 3000元/月")
+    公式:
+      标准版 = 所有 STANDARD + CUSTOM 功能
+      裁剪版 = 核心 STANDARD 功能（前 60%）
+      人天 = std_count × days_per_std + custom_count × days_per_std × custom_multiplier
+      开发费 = 人天 × person_day_rate
+      维护费 = 开发费 × maintenance_rate
+      毛利 = 开发费 × margin_rate
+    """
+    from core.config import get_config
+
+    logger.info("=" * 60)
+    logger.info("[Commercial Agent] 节点启动 - 动态双报价生成")
+
+    features = state.get("prd_features", [])
+    logger.info("[Commercial Agent] 输入: prd_features 数量=%d", len(features))
+
+    # 分类统计功能点
+    std_features = [f for f in features if f.get("tag") == FeatureTag.STANDARD.value]
+    custom_features = [f for f in features if f.get("tag") == FeatureTag.CUSTOM.value]
+    unsupported = [f for f in features if f.get("tag") == FeatureTag.UNSUPPORTED.value]
+
+    logger.info("[Commercial Agent] 功能分类: 标准=%d, 定制=%d, 不支持=%d",
+                len(std_features), len(custom_features), len(unsupported))
+
+    # 加载成本参数
+    cfg = get_config()
+    cost = cfg.cost
+    pd_rate = cost.person_day_rate
+    days_std = cost.days_per_std_feature
+    custom_mul = cost.custom_multiplier
+    margin = cost.margin_rate
+    maint = cost.maintenance_rate
+
+    logger.info("[Commercial Agent] 成本参数: 人天费率=%d元, 标准人天/功能=%d, "
+                "定制倍率=%.1fx, 毛利率=%.0f%%, 维护费率=%.0f%%",
+                pd_rate, days_std, custom_mul, margin * 100, maint * 100)
+
+    # ---- 标准版：所有 STANDARD + CUSTOM ----
+    std_pd = len(std_features) * days_std
+    custom_pd = len(custom_features) * int(days_std * custom_mul)
+    total_pd_standard = std_pd + custom_pd
+    dev_fee_standard = total_pd_standard * pd_rate
+
+    # ---- 裁剪版：核心 STANDARD 功能（前 60%） ----
+    core_count = max(1, int(len(std_features) * 0.6))
+    total_pd_trimmed = core_count * days_std
+    dev_fee_trimmed = total_pd_trimmed * pd_rate
 
     quotes = {
         "标准版": {
-            "功能数": 7, "人天": 120, "开发费": 360000,
-            "维护费": 36000, "毛利": 144000, "毛利率": 0.40,
+            "功能数": len(std_features) + len(custom_features),
+            "人天": total_pd_standard,
+            "开发费": dev_fee_standard,
+            "维护费": int(dev_fee_standard * maint),
+            "毛利": int(dev_fee_standard * margin),
+            "毛利率": margin,
         },
         "裁剪版": {
-            "功能数": 5, "人天": 80, "开发费": 240000,
-            "维护费": 24000, "毛利": 96000, "毛利率": 0.40,
+            "功能数": core_count,
+            "人天": total_pd_trimmed,
+            "开发费": dev_fee_trimmed,
+            "维护费": int(dev_fee_trimmed * maint),
+            "毛利": int(dev_fee_trimmed * margin),
+            "毛利率": margin,
         },
     }
 
     logger.info("[Commercial Agent] 报价生成完成:")
     for version, quote in quotes.items():
-        logger.info("[Commercial Agent]   %s: 开发费=%d元 维护费=%d元 毛利=%d元 毛利率=%.0f%%",
-                    version, quote["开发费"], quote["维护费"], quote["毛利"], quote["毛利率"] * 100)
+        logger.info("[Commercial Agent]   %s: 功能=%d, 人天=%d, 开发费=%d元, "
+                    "维护费=%d元, 毛利=%d元 (%.0f%%)",
+                    version, quote["功能数"], quote["人天"], quote["开发费"],
+                    quote["维护费"], quote["毛利"], quote["毛利率"] * 100)
 
     logger.info("[Commercial Agent] 节点完成")
     logger.info("=" * 60)

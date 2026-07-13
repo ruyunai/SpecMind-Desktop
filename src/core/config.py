@@ -58,6 +58,20 @@ class AgentModelConfig:
     use_global_key: bool = True        # 是否使用全局 API Key
 
 
+@dataclass
+class CostConfig:
+    """报价成本参数（可在 GUI 成本参数 Tab 中配置）。
+
+    不同公司/项目可通过调整这些参数灵活控制报价。
+    """
+    person_day_rate: int = 3000            # 元/人天
+    days_per_std_feature: int = 15         # 每个标准功能所需人天
+    custom_multiplier: float = 2.0         # 定制功能人天倍率（相对标准功能）
+    margin_rate: float = 0.40              # 毛利率
+    maintenance_rate: float = 0.10         # 维护费占开发费比例
+    project_months: int = 3                # 项目周期（月）
+
+
 def _get_app_data_dir() -> Path:
     """获取应用数据目录（%APPDATA%/SpecMindDesktop/）。"""
     appdata = os.environ.get("APPDATA", str(Path.home()))
@@ -77,6 +91,7 @@ class AppConfig:
     global_api_key_enc: str = ""       # 全局 API Key（Fernet 加密）
     embedding_model: str = "BAAI/bge-m3"
     agents: Dict[str, AgentModelConfig] = field(default_factory=_default_agents)
+    cost: CostConfig = field(default_factory=CostConfig)
     data_dir: Path = field(default_factory=_get_app_data_dir)
 
     @property
@@ -145,6 +160,7 @@ class AppConfig:
             "embedding_model": self.embedding_model,
             "data_dir": str(self.data_dir),
             "agents": {k: asdict(v) for k, v in self.agents.items()},
+            "cost": asdict(self.cost),
         }
         self.app_config_path.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -189,6 +205,9 @@ class AppConfig:
                 config.agents = {
                     k: AgentModelConfig(**agents_data[k]) for k in AGENT_KEYS if k in agents_data
                 } or _default_agents()
+                cost_data = data.get("cost", {})
+                if cost_data:
+                    config.cost = CostConfig(**cost_data)
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
         config.ensure_dirs()
