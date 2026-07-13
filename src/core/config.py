@@ -211,14 +211,20 @@ class AppConfig:
                 config.global_api_key_enc = data.get("global_api_key_enc", "")
                 config.embedding_model = data.get("embedding_model", config.embedding_model)
                 agents_data = data.get("agents", {})
-                config.agents = {
-                    k: AgentModelConfig(**agents_data[k]) for k in AGENT_KEYS if k in agents_data
-                } or _default_agents()
+                # 以默认配置为底，用文件中存在的 Agent 配置覆盖，避免部分缺失时丢弃
+                defaults = _default_agents()
+                for k in AGENT_KEYS:
+                    if k in agents_data:
+                        try:
+                            defaults[k] = AgentModelConfig(**agents_data[k])
+                        except TypeError:
+                            _config_logger.warning("Agent %s 配置字段不匹配，使用默认配置", k)
+                config.agents = defaults
                 cost_data = data.get("cost", {})
                 if cost_data:
                     config.cost = CostConfig(**cost_data)
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                _config_logger.warning("配置加载失败，使用默认配置: %s", e)
         config.ensure_dirs()
         return config
 
