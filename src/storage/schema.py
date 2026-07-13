@@ -16,6 +16,7 @@ class AssetCategory(str, Enum):
     PRD_HISTORY = "prd"            # 历史 PRD
     COST_MODEL = "cost"            # 成本模型
     STANDARD_FEATURE = "feature"   # 标准功能清单
+    GENERIC = "generic"            # 通用文档
 
 
 class AssetMeta(TypedDict, total=False):

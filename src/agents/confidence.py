@@ -139,17 +139,18 @@ def get_degrade_message(agent_name: str, assessment: ConfidenceAssessment) -> st
 def should_block_workflow(agent_name: str, assessment: ConfidenceAssessment) -> bool:
     """判断是否应阻断工作流（强降级场景）。
 
-    仅 Legal Agent 在 empty 级别时阻断（合规风险不可忽视）。
-    其他 Agent 降级但继续执行。
+    2026-07-14 修订：Legal Agent 空检索不再自动阻断。
+    LLM 自身具备丰富的法律知识，空检索时由 LLM 用自身知识判定风险等级。
+    仅在 LLM 调用也失败时才阻断（作为安全网，在 rag_agents.py 中处理）。
 
     Args:
         agent_name: Agent 名称
         assessment: 置信度评估
 
     Returns:
-        True 表示应阻断
+        True 表示应阻断（仅 LLM 失败 + 空检索时）
     """
     if agent_name == "legal_agent" and assessment.confidence_level == "empty":
-        logger.warning("Legal Agent 检索结果为空，建议阻断工作流")
-        return True
+        logger.info("Legal Agent 检索结果为空，将由 LLM 用自身法律知识判定风险")
+        return False
     return False

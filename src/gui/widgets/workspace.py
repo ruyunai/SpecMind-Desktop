@@ -29,6 +29,39 @@ from PySide6.QtCore import Qt, Signal
 from pathlib import Path
 
 
+def _extract_weeks(phase: dict) -> int:
+    """安全提取阶段周数，兼容 int/str/带「周」字格式。"""
+    for key in ("duration", "weeks"):
+        val = phase.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            import re
+            match = re.search(r"[\d.]+", val)
+            if match:
+                try:
+                    return int(float(match.group()))
+                except ValueError:
+                    return 0
+            return 0
+    return 0
+
+
+def _format_duration(phase: dict) -> str:
+    """格式化工期显示文本。"""
+    for key in ("duration", "weeks"):
+        val = phase.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (int, float)):
+            return f"{int(val)}周"
+        if isinstance(val, str) and val:
+            return val if "周" in val else f"{val}周"
+    return "0周"
+
+
 class WorkspacePanel(QWidget):
     """中栏工作区，含三个 Tab。"""
 
@@ -375,11 +408,16 @@ class WorkspacePanel(QWidget):
         plan_text = ""
         total_weeks = 0
         for phase in plan:
-            weeks = int(phase.get("duration", "0周").replace("周", ""))
+            weeks = _extract_weeks(phase)
             total_weeks += weeks
-            plan_text += f"【{phase.get('phase', '')}】({phase.get('duration', '')})\n"
-            plan_text += f"  交付物: {phase.get('deliverable', '')}\n\n"
-        plan_text += f"━━ 总工期: {total_weeks} 周 ━━"
+            dur_display = _format_duration(phase)
+            dlv = phase.get("deliverable", phase.get("deliverables", "未指定"))
+            plan_text += f"【{phase.get('phase', phase.get('name', '未命名'))}】({dur_display})\n"
+            plan_text += f"  交付物: {dlv}\n\n"
+        if plan:
+            plan_text += f"━━ 总工期: {total_weeks} 周 ━━"
+        else:
+            plan_text = "（无交付计划数据）"
         self.plan_view.setPlainText(plan_text)
 
         # 恢复按钮

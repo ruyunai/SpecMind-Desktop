@@ -230,9 +230,18 @@ def pm_agent(state: SpecMindState) -> dict:
                         "验收标准", "非功能需求", "埋点要求", "风险章节"]
 
     if llm_reply:
-        prd = {"llm_output": llm_reply}
-        # 尝试从 LLM 回复中提取 JSON
-        prd_features = _parse_llm_features(llm_reply)
+        # 优先解析 JSON 结构，提取 prd 和 prd_features
+        parsed = _extract_json(llm_reply)
+        if isinstance(parsed, dict) and "prd" in parsed:
+            prd = parsed.get("prd", {})
+            if not isinstance(prd, dict):
+                prd = {"llm_output": str(prd)}
+            prd_features = parsed.get("prd_features", parsed.get("features", []))
+            if not isinstance(prd_features, list):
+                prd_features = _parse_llm_features(llm_reply)
+        else:
+            prd = {"llm_output": llm_reply}
+            prd_features = _parse_llm_features(llm_reply)
     else:
         prd = {
             "背景目标": "为 K12 教育机构提供一站式在线教学管理平台，解决排课混乱、教学数据分散问题。",
@@ -276,21 +285,76 @@ def pm_agent(state: SpecMindState) -> dict:
     }
 
 
-def _parse_llm_features(llm_text: str) -> list:
-    """尝试从 LLM 返回文本中提取功能点列表。"""
+def _clean_markdown(text: str) -> str:
+    """去除 LLM 输出中的 markdown 代码块标记。"""
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _extract_json(text: str) -> dict | list | None:
+    """从 LLM 文本中提取 JSON 对象或数组。
+
+    先清理 markdown 标记，然后尝试直接解析；
+    失败则用括号匹配提取 dict 或 list。
+
+    Returns:
+        解析后的 dict/list，或 None（解析失败）
+    """
     import json
-    # 尝JSON 提取
+    cleaned = _clean_markdown(text)
+    # 直接解析
     try:
-        # 查找 JSON 数组或对象
-        start = llm_text.find("[")
-        end = llm_text.rfind("]") + 1
-        if start >= 0 and end > start:
-            data = json.loads(llm_text[start:end])
-            if isinstance(data, list):
-                return data
+        data = json.loads(cleaned)
+        if isinstance(data, (dict, list)):
+            return data
     except (json.JSONDecodeError, ValueError):
         pass
-    # 回退：返回简单结构
+    # 提取 dict
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(cleaned[start:end])
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # 提取 list
+    start = cleaned.find("[")
+    end = cleaned.rfind("]") + 1
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(cleaned[start:end])
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _parse_llm_features(llm_text: str) -> list:
+    """从 LLM 返回文本中提取功能点列表。
+
+    支持三种格式：
+    - 直接 JSON 数组 [...]
+    - JSON 对象含 prd_features 字段 {"prd_features": [...]}
+    - 纯文本回退
+    """
+    data = _extract_json(llm_text)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        # PM Agent 输出 {"prd": {...}, "prd_features": [...]}
+        features = data.get("prd_features", data.get("features", []))
+        if isinstance(features, list) and features:
+            return features
+    # 回退
     return [{"name": "LLM 输出", "tag": FeatureTag.STANDARD.value,
              "desc": llm_text[:200]}]
 
@@ -298,33 +362,25 @@ def _parse_llm_features(llm_text: str) -> list:
 def _parse_llm_delivery_plan(llm_text: str) -> list:
     """从 LLM 返回文本中提取交付计划列表。
 
-    期望 LLM 输出 JSON 数组，每项含 phase/weeks(or duration)/deliverables(or deliverable)。
-    回退时构造单阶段占位结构，避免下游 key 不存在崩溃。
+    支持直接 JSON 数组或纯文本回退。
+    规范化 key：deliverables → deliverable，weeks → duration。
     """
-    import json
-    try:
-        start = llm_text.find("[")
-        end = llm_text.rfind("]") + 1
-        if start >= 0 and end > start:
-            data = json.loads(llm_text[start:end])
-            if isinstance(data, list) and data:
-                # 规范化 key：deliverables → deliverable，保证下游一致
-                normalized = []
-                for item in data:
-                    if not isinstance(item, dict):
-                        continue
-                    phase_name = item.get("phase", item.get("name", "未命名阶段"))
-                    duration = item.get("weeks", item.get("duration", "0周"))
-                    deliverable = item.get("deliverables", item.get("deliverable", "未指定"))
-                    normalized.append({
-                        "phase": phase_name,
-                        "duration": duration,
-                        "deliverable": deliverable,
-                    })
-                return normalized if normalized else []
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # 回退：将 LLM 文本作为单阶段描述（避免下游访问 None）
+    data = _extract_json(llm_text)
+    if isinstance(data, list) and data:
+        normalized = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            phase_name = item.get("phase", item.get("name", "未命名阶段"))
+            duration = item.get("weeks", item.get("duration", "0周"))
+            deliverable = item.get("deliverables", item.get("deliverable", "未指定"))
+            normalized.append({
+                "phase": phase_name,
+                "duration": duration,
+                "deliverable": deliverable,
+            })
+        return normalized if normalized else []
+    # 回退
     return [{"phase": "LLM 输出", "duration": "0周",
              "deliverable": llm_text[:200]}]
 
@@ -498,10 +554,21 @@ def review_agent(state: SpecMindState) -> dict:
         logger.error("[Review Agent] LLM 调用失败，回退到 mock: %s", e)
 
     if llm_reply:
-        review_pass = "不通过" not in llm_reply[:500]
-        review_comments = {"tech": [llm_reply[:300]],
-                           "design": ["见 LLM 完整输出"],
-                           "qa": ["见 LLM 完整输出"]}
+        # 解析 LLM 返回的 JSON 结构
+        parsed = _extract_json(llm_reply)
+        if isinstance(parsed, dict) and any(k in parsed for k in ("tech", "design", "qa")):
+            review_comments = {
+                "tech": parsed.get("tech", []) if isinstance(parsed.get("tech"), list) else [str(parsed.get("tech"))],
+                "design": parsed.get("design", []) if isinstance(parsed.get("design"), list) else [str(parsed.get("design"))],
+                "qa": parsed.get("qa", []) if isinstance(parsed.get("qa"), list) else [str(parsed.get("qa"))],
+            }
+            review_pass = bool(parsed.get("review_pass", True))
+        else:
+            # JSON 解析失败，回退到文本截取
+            review_pass = "不通过" not in llm_reply[:500]
+            review_comments = {"tech": [llm_reply[:300]],
+                               "design": ["见 LLM 完整输出"],
+                               "qa": ["见 LLM 完整输出"]}
     else:
         review_comments = {
             "tech": [

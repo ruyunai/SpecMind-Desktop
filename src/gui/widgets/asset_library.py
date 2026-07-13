@@ -25,11 +25,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 
 
-# 资产分类定义（顺序 = 展示顺序）
+# 资产分类定义（顺序 = 展示顺序，key 必须严格等于 AssetCategory.XXX.value）
 CATEGORY_GROUPS = [
     ("标准功能清单", "feature", "企业标准能力库（CRUD/排课/直播/作业/支付/看板等）"),
     ("法规库", "regulation", "本地法规库（个人信息保护法/数据安全法/未成年人保护法/广告法等）"),
     ("合同模板库", "contract", "标准合同模板（维护条款/性能条款/知识产权条款/定制条款）"),
+    ("历史 PRD", "prd", "历史项目 PRD 文档（作为新项目参考基线）"),
+    ("通用文档", "generic", "其他企业文档（流程规范/技术规范/会议纪要等）"),
 ]
 
 

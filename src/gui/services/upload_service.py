@@ -32,7 +32,7 @@ CATEGORY_MAP = {
     "contract":    {"chunk_type": "contract",    "category": AssetCategory.CONTRACT_TEMPLATE},
     "prd":         {"chunk_type": "prd",         "category": AssetCategory.PRD_HISTORY},
     "feature":     {"chunk_type": "generic",     "category": AssetCategory.STANDARD_FEATURE},
-    "generic":     {"chunk_type": "generic",     "category": AssetCategory.STANDARD_FEATURE},
+    "generic":     {"chunk_type": "generic",     "category": AssetCategory.GENERIC},
 }
 
 

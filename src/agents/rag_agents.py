@@ -198,26 +198,38 @@ def legal_agent_rag(state: SpecMindState) -> dict:
     except Exception as e:
         logger.error("[Legal Agent-RAG] LLM 调用失败，回退到 mock: %s", e)
 
-    # 6. 解析输出（优先 LLM 结果，失败则 mock）
+    # 6. 解析输出（LLM 知识为主，空检索不强制阻断）
     if llm_reply:
-        # 简单解析：从 LLM 回复中提取风险等级
-        reply_lower = llm_reply.lower()
-        if "高风险" in llm_reply or "high" in reply_lower[:200]:
+        # 解析 LLM 返回的 JSON 结构
+        from agents.mock_agents import _extract_json
+        parsed = _extract_json(llm_reply)
+        if isinstance(parsed, dict) and "risk_level" in parsed:
+            llm_risk = str(parsed.get("risk_level", "low")).lower()
+            legal_issues = parsed.get("legal_issues", [])
+            if not isinstance(legal_issues, list):
+                legal_issues = [{"law": "LLM 分析", "issue": str(legal_issues)[:500], "suggestion": "详见 LLM 输出"}]
+        else:
+            # JSON 解析失败，回退到文本解析
+            reply_lower = llm_reply.lower()
+            if "high" in reply_lower[:200] or "高风险" in llm_reply:
+                llm_risk = "high"
+            elif "medium" in reply_lower[:200] or "中风险" in llm_reply:
+                llm_risk = "medium"
+            else:
+                llm_risk = "low"
+            legal_issues = [{"law": "LLM 分析", "issue": llm_reply[:500], "suggestion": "详见 LLM 输出"}]
+
+        if llm_risk == "high":
             risk_level = RiskLevel.HIGH
             legal_blocked = True
-        elif "中风险" in llm_reply or "medium" in reply_lower[:200]:
+        elif llm_risk == "medium":
             risk_level = RiskLevel.MEDIUM
             legal_blocked = False
         else:
             risk_level = RiskLevel.LOW
             legal_blocked = False
-        # 空检索强阻断不可被 LLM 输出覆盖（项目约束：Legal 空检索必须阻断）
-        if should_block:
-            legal_blocked = True
-            risk_level = RiskLevel.HIGH
-            logger.warning("[Legal Agent-RAG] 检索结果为空，强制阻断（覆盖 LLM 输出）")
-        legal_issues = [{"law": "LLM 分析", "issue": llm_reply[:500], "suggestion": "详见 LLM 输出"}]
     else:
+        # LLM 调用失败的安全网：空检索 + LLM 失败 → 阻断（无法评估风险）
         legal_issues = []
         for r in results[:3]:
             meta = r.get("metadata", {})
@@ -227,15 +239,19 @@ def legal_agent_rag(state: SpecMindState) -> dict:
                 "suggestion": "请参考法条具体内容",
             })
         if not legal_issues:
+            # LLM 失败 + 空检索 → 高风险阻断（安全网）
             legal_issues = [{
-                "law": "知识库覆盖不足",
-                "issue": "未检索到高相关度法规" if assessment.should_degrade else "未发现明显违规",
-                "suggestion": "建议人工复核" if assessment.should_degrade else "正常放行",
+                "law": "LLM 不可用 + 知识库空",
+                "issue": "无法评估合规风险（LLM 调用失败且知识库无命中）",
+                "suggestion": "建议人工复核或检查 LLM 配置后重试",
             }]
-        risk_level = RiskLevel.HIGH if should_block else (
-            RiskLevel.MEDIUM if results else RiskLevel.LOW
-        )
-        legal_blocked = should_block
+            risk_level = RiskLevel.HIGH
+            legal_blocked = True
+            logger.warning("[Legal Agent-RAG] LLM 失败 + 空检索，安全网阻断")
+        else:
+            # LLM 失败但有检索结果 → 中风险不阻断
+            risk_level = RiskLevel.MEDIUM
+            legal_blocked = False
 
     logger.info("[Legal Agent-RAG] 风险等级: %s, 阻断: %s", risk_level.value, legal_blocked)
     logger.info("[Legal Agent-RAG] 节点完成")

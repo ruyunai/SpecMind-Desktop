@@ -1,7 +1,10 @@
 """文档解析器 - 统一 Word/PDF/文本/JSON 解析接口。
 
-修复 RAG 审查问题 #1 前置依赖：统一文档解析为纯文本，
-供分块器使用。支持 .docx/.pdf/.txt/.json 四种格式。
+支持 .docx/.pdf/.txt/.json 四种格式。
+- .docx → python-docx 按顺序提取段落 + 表格（表格转 Markdown）
+- .pdf  → pdfplumber 提取文本 + 表格（表格转 Markdown）
+- .txt  → 直接读取
+- .json → 格式化为可读文本
 """
 import json
 from pathlib import Path
@@ -15,17 +18,11 @@ logger = setup_logger("specmind.parsers")
 def parse_document(file_path: str) -> str:
     """解析文档为纯文本。
 
-    根据扩展名自动选择解析器：
-    - .docx → python-docx 提取段落
-    - .pdf → PyPDF2 提取页面文本
-    - .txt → 直接读取
-    - .json → 格式化为可读文本
-
     Args:
         file_path: 文档绝对路径
 
     Returns:
-        解析后的纯文本内容
+        解析后的纯文本内容（表格转为 Markdown 格式）
 
     Raises:
         ValueError: 不支持的文件格式
@@ -50,27 +47,91 @@ def parse_document(file_path: str) -> str:
         raise ValueError(f"不支持的文件格式: {suffix}（仅支持 .docx/.pdf/.txt/.json）")
 
 
+def _table_rows_to_markdown(rows: list) -> str:
+    """将表格行列表转为 Markdown 表格文本。
+
+    Args:
+        rows: 二维列表，每个子列表是一行的单元格文本
+
+    Returns:
+        Markdown 格式表格字符串，空表格返回空字符串
+    """
+    if not rows:
+        return ""
+    lines = []
+    for i, row in enumerate(rows):
+        cells = [str(c).strip().replace("\n", " ") if c else "" for c in row]
+        lines.append("| " + " | ".join(cells) + " |")
+        if i == 0:
+            lines.append("| " + " | ".join(["---"] * len(cells)) + " |")
+    return "\n".join(lines)
+
+
 def _parse_docx(path: Path) -> str:
-    """解析 Word 文档，提取所有段落文本。"""
+    """解析 Word 文档，按文档顺序提取段落和表格。
+
+    使用 lxml 遍历 body 子元素，保持段落和表格的原始顺序。
+    表格转为 Markdown 格式，避免内容丢失。
+    """
     from docx import Document
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
+
     doc = Document(str(path))
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-    text = "\n".join(paragraphs)
-    logger.info("Word 解析完成: %d 段落, %d 字符", len(paragraphs), len(text))
+    parts = []
+    table_count = 0
+
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            p = Paragraph(child, doc)
+            text = p.text.strip()
+            if text:
+                parts.append(text)
+        elif child.tag == qn("w:tbl"):
+            tbl = Table(child, doc)
+            rows = [[cell.text for cell in row.cells] for row in tbl.rows]
+            md = _table_rows_to_markdown(rows)
+            if md:
+                parts.append(md)
+                table_count += 1
+
+    text = "\n\n".join(parts)
+    logger.info("Word 解析完成: %d 段落, %d 表格, %d 字符",
+                len(parts) - table_count, table_count, len(text))
     return text
 
 
 def _parse_pdf(path: Path) -> str:
-    """解析 PDF 文档，提取所有页面文本。"""
-    from PyPDF2 import PdfReader
-    reader = PdfReader(str(path))
-    pages = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
-        if text.strip():
-            pages.append(text.strip())
-    text = "\n\n".join(pages)
-    logger.info("PDF 解析完成: %d 页, %d 字符", len(reader.pages), len(text))
+    """解析 PDF 文档，提取每页文本和表格。
+
+    使用 pdfplumber 提取文本 + 表格，表格转 Markdown 格式。
+    比 PyPDF2 更准确地还原表格和复杂布局。
+    """
+    import pdfplumber
+
+    parts = []
+    table_count = 0
+    page_count = 0
+
+    with pdfplumber.open(str(path)) as pdf:
+        page_count = len(pdf.pages)
+        for page in pdf.pages:
+            # 提取页面文本
+            text = page.extract_text() or ""
+            if text.strip():
+                parts.append(text.strip())
+            # 提取页面表格
+            tables = page.extract_tables() or []
+            for table in tables:
+                md = _table_rows_to_markdown(table)
+                if md:
+                    parts.append(md)
+                    table_count += 1
+
+    text = "\n\n".join(parts)
+    logger.info("PDF 解析完成: %d 页, %d 表格, %d 字符",
+                page_count, table_count, len(text))
     return text
 
 
@@ -103,7 +164,6 @@ def parse_raw_input(raw: str) -> str:
     raw = raw.strip()
     if not raw:
         return ""
-    # 尝试 JSON 解析
     if raw.startswith("{") or raw.startswith("["):
         try:
             data = json.loads(raw)

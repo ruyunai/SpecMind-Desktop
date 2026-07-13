@@ -18,6 +18,7 @@ cryptography==43.0.0
 # 文件解析
 python-docx==1.1.2
 PyPDF2==3.0.1
+pdfplumber==0.11.10
 
 # 打包
 pyinstaller==6.21.0
