@@ -211,8 +211,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("✅ 工作流完成 - PRD 已生成")
 
     def closeEvent(self, event) -> None:
-        """窗口关闭时清理线程。"""
+        """窗口关闭时清理线程。
+
+        三层终止策略：
+        1. cancel() 设置 _cancel_flag + 解除 _confirm_event 阻塞，让 stream 循环正常退出
+        2. wait(3000) 等待线程自然结束
+        3. terminate() 强制终止（兜底，仅在自然退出失败时使用）
+        """
         if self._orchestrator and self._orchestrator.isRunning():
-            self._orchestrator.quit()
+            self._orchestrator.cancel()  # 解除 Interrupt 阻塞 + 设置 cancel flag
             self._orchestrator.wait(3000)
+            if self._orchestrator.isRunning():
+                logger.warning("[Main] 线程未自然退出，强制 terminate")
+                self._orchestrator.terminate()
+                self._orchestrator.wait(1000)
         event.accept()

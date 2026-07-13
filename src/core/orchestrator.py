@@ -59,6 +59,7 @@ class WorkflowOrchestrator(QThread):
         self._state: SpecMindState = {}
         self._confirm_event = threading.Event()
         self._reject_flag = False
+        self._cancel_flag = False  # 取消标志（closeEvent 时设置，stream 循环检查）
         self._completed_nodes: set[str] = set()
         self._run_id: str = ""              # 本次运行唯一 ID
         self._node_start_times: dict[str, float] = {}  # 节点开始时间
@@ -90,6 +91,15 @@ class WorkflowOrchestrator(QThread):
         """用户拒绝放行 - 终止工作流。"""
         self._reject_flag = True
         self._confirm_event.set()
+
+    def cancel(self) -> None:
+        """取消工作流（窗口关闭时调用）。
+
+        解除 _confirm_event 阻塞 + 设置 _cancel_flag 让 stream 循环退出。
+        """
+        self._reject_flag = True
+        self._cancel_flag = True
+        self._confirm_event.set()  # 解除 Interrupt 等待阻塞
 
     def run(self) -> None:
         """执行工作流（后台线程入口）。"""
@@ -178,6 +188,9 @@ class WorkflowOrchestrator(QThread):
         # 此处先 emit started 再 merge state 再 emit finished，至少保证信号顺序正确，
         # GUI 上"执行中"状态会短暂显示。要彻底消除滞后需升级 LangGraph 或使用节点回调机制。
         for event in graph.stream(initial_state, config, stream_mode="updates"):
+            if self._cancel_flag:
+                self._emit_log("[Orchestrator] ⏹ 检测到取消信号，主图 stream 退出")
+                break
             for node_name, node_update in event.items():
                 # 审计：记录 entry（时间戳标记在实际 merge 前）
                 entry_ts = time.time()
@@ -238,6 +251,9 @@ class WorkflowOrchestrator(QThread):
         store = get_store()
         # resume 图同样使用 updates 模式，节点开始信号存在天然滞后
         for event in resume_graph.stream(resume_state, stream_mode="updates"):
+            if self._cancel_flag:
+                self._emit_log("[Orchestrator] ⏹ 检测到取消信号，resume 图 stream 退出")
+                break
             for node_name, node_update in event.items():
                 entry_ts = time.time()
                 self._node_start_times[node_name] = entry_ts
