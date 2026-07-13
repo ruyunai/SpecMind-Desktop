@@ -21,30 +21,29 @@ _config_logger = setup_logger("specmind.core")
 # 7 个 Agent 的固定标识
 AGENT_KEYS = ["sar", "legal", "pm", "commercial", "contract", "review", "planner"]
 
-# 预设模型路由策略
+# 预设模型路由策略（DeepSeek 默认）
 PRESET_ROUTING = {
     "混合路由（推荐）": {
-        "sar": "THUDM/glm-4-flash",
-        "legal": "Qwen/Qwen2.5-72B-Instruct",
-        "pm": "Qwen/Qwen2.5-72B-Instruct",
-        "commercial": "deepseek-ai/DeepSeek-V3",
-        "contract": "Qwen/Qwen2.5-72B-Instruct",
-        "review": "deepseek-ai/DeepSeek-V3",
-        "planner": "THUDM/glm-4-flash",
+        "sar": "deepseek-chat",
+        "legal": "deepseek-chat",
+        "pm": "deepseek-chat",
+        "commercial": "deepseek-chat",
+        "contract": "deepseek-chat",
+        "review": "deepseek-chat",
+        "planner": "deepseek-chat",
     },
-    "全 Qwen2.5-72B": {k: "Qwen/Qwen2.5-72B-Instruct" for k in AGENT_KEYS},
-    "全 DeepSeek-V3": {k: "deepseek-ai/DeepSeek-V3" for k in AGENT_KEYS},
-    "全 GLM-4-Flash": {k: "THUDM/glm-4-flash" for k in AGENT_KEYS},
+    "全 DeepSeek-V3": {k: "deepseek-chat" for k in AGENT_KEYS},
+    "全 DeepSeek-R1": {k: "deepseek-reasoner" for k in AGENT_KEYS},
+    "全硅基 GLM-4": {k: "THUDM/glm-4-flash" for k in AGENT_KEYS},
 }
 
-# 硅基流动常用模型列表（供 GUI 下拉选择）
+# 常用模型列表（供 GUI 下拉选择）
 COMMON_MODELS = [
+    "deepseek-chat",
+    "deepseek-reasoner",
     "THUDM/glm-4-flash",
-    "THUDM/glm-4-9b-chat",
     "Qwen/Qwen2.5-72B-Instruct",
     "Qwen/Qwen2.5-7B-Instruct",
-    "deepseek-ai/DeepSeek-V3",
-    "deepseek-ai/DeepSeek-V2.5",
     "meta-llama/Meta-Llama-3.1-405B-Instruct",
 ]
 
@@ -87,7 +86,7 @@ def _default_agents() -> Dict[str, AgentModelConfig]:
 @dataclass
 class AppConfig:
     """应用配置（全局 + 每 Agent）。"""
-    global_base_url: str = "https://api.siliconflow.cn/v1"
+    global_base_url: str = "https://api.deepseek.com/v1"
     global_api_key_enc: str = ""       # 全局 API Key（Fernet 加密）
     embedding_model: str = "BAAI/bge-m3"
     agents: Dict[str, AgentModelConfig] = field(default_factory=_default_agents)
@@ -120,7 +119,13 @@ class AppConfig:
         return self.data_dir / "audit.db"
 
     def get_global_api_key(self) -> str:
-        """解密返回全局 API Key 明文。"""
+        """解密返回全局 API Key 明文。
+
+        优先级：环境变量 SPECMIND_API_KEY > 加密存储。
+        """
+        env_key = os.environ.get("SPECMIND_API_KEY", "").strip()
+        if env_key:
+            return env_key
         return get_crypto().decrypt(self.global_api_key_enc)
 
     def set_global_api_key(self, plaintext: str) -> None:

@@ -187,48 +187,66 @@ def legal_agent_high_risk(state: SpecMindState) -> dict:
 # PM Agent - PRD 生成
 # ============================================================
 def pm_agent(state: SpecMindState) -> dict:
-    """PM Agent：严格遵循 8 模块模板生成 PRD。"""
+    """PM Agent：调用 LLM 生成 PRD 和功能点标注。"""
     logger.info("=" * 60)
     logger.info("[PM Agent] 节点启动 - PRD 生成")
     logger.info("[PM Agent] 输入: cleaned_requirements 长度=%d 字符",
                 len(state.get("cleaned_requirements", "")))
-    logger.info("[PM Agent] 检查 Legal 阻断状态: legal_blocked=%s",
-                state.get("legal_blocked", False))
 
-    logger.info("[PM Agent] 加载企业标准 PRD 模板 (8 模块)...")
+    cleaned = state.get("cleaned_requirements", "")
+    legal_issues = state.get("legal_issues", [])
+    legal_risk = state.get("legal_risk_level", "low")
+
+    # 尝试调用 LLM
+    llm_reply = ""
+    try:
+        from agents.prompts import build_pm_prompt
+        from agents.llm_client import invoke_llm
+        prompt = build_pm_prompt(cleaned, legal_issues, legal_risk)
+        logger.info("[PM Agent] Prompt 构建完成, 长度=%d", len(prompt))
+        llm_reply = invoke_llm("pm", prompt)
+        logger.info("[PM Agent] LLM 返回 %d 字符", len(llm_reply))
+    except Exception as e:
+        logger.error("[PM Agent] LLM 调用失败，回退到 mock: %s", e)
+
+    # 回退：mock PRD
+    if not llm_reply:
+        logger.info("[PM Agent] 加载企业标准 PRD 模板 (8 模块)...")
     required_modules = ["背景目标", "用户故事", "功能列表", "In_Out范围",
                         "验收标准", "非功能需求", "埋点要求", "风险章节"]
 
-    prd = {
-        "背景目标": "为 K12 教育机构提供一站式在线教学管理平台，解决排课混乱、教学数据分散问题。",
-        "用户故事": "作为教师，我希望能够创建课程并排课，以便管理教学计划；作为学生，我希望能够在线学习并提交作业，以便完成学习任务。",
-        "功能列表": "1.课程管理 2.排课系统 3.在线直播 4.作业批改 5.学习进度 6.数据看板 7.支付系统 8.账号管理",
-        "In_Out范围": "In: 教学管理核心流程、支付、数据看板；Out: 家校沟通、AI 推荐、多语言",
-        "验收标准": "直播延迟≤2s；支持1000人同时在线；作业批改支持图片/文档；支付支持微信/支付宝",
-        "非功能需求": "响应时间≤500ms；可用性99.9%；数据加密存储；支持Chrome/Edge/Safari",
-        "埋点要求": "课程创建、直播参与、作业提交、支付完成 4 个核心事件埋点",
-        "风险章节": "1.10万并发需定制（标准版上限1万）2.源代码不对外提供 3.首年免费维护（非终身）",
-    }
-    logger.info("[PM Agent] PRD 生成完成, 模块数=%d/8", len(prd))
-    for module in required_modules:
-        logger.info("[PM Agent]   ✓ %s", module)
+    if llm_reply:
+        prd = {"llm_output": llm_reply}
+        # 尝试从 LLM 回复中提取 JSON
+        prd_features = _parse_llm_features(llm_reply)
+    else:
+        prd = {
+            "背景目标": "为 K12 教育机构提供一站式在线教学管理平台，解决排课混乱、教学数据分散问题。",
+            "用户故事": "作为教师，我希望能够创建课程并排课，以便管理教学计划；作为学生，我希望能够在线学习并提交作业，以便完成学习任务。",
+            "功能列表": "1.课程管理 2.排课系统 3.在线直播 4.作业批改 5.学习进度 6.数据看板 7.支付系统 8.账号管理",
+            "In_Out范围": "In: 教学管理核心流程、支付、数据看板；Out: 家校沟通、AI 推荐、多语言",
+            "验收标准": "直播延迟≤2s；支持1000人同时在线；作业批改支持图片/文档；支付支持微信/支付宝",
+            "非功能需求": "响应时间≤500ms；可用性99.9%；数据加密存储；支持Chrome/Edge/Safari",
+            "埋点要求": "课程创建、直播参与、作业提交、支付完成 4 个核心事件埋点",
+            "风险章节": "1.10万并发需定制（标准版上限1万）2.源代码不对外提供 3.首年免费维护（非终身）",
+        }
+        prd_features = [
+            {"name": "课程管理", "tag": FeatureTag.STANDARD.value, "desc": "标准课程CRUD"},
+            {"name": "排课系统", "tag": FeatureTag.STANDARD.value, "desc": "日历式排课"},
+            {"name": "在线直播", "tag": FeatureTag.STANDARD.value, "desc": "标准直播能力"},
+            {"name": "作业批改", "tag": FeatureTag.STANDARD.value, "desc": "支持图文批改"},
+            {"name": "学习进度追踪", "tag": FeatureTag.STANDARD.value, "desc": "标准进度追踪"},
+            {"name": "数据看板", "tag": FeatureTag.STANDARD.value, "desc": "标准BI看板"},
+            {"name": "支付系统", "tag": FeatureTag.STANDARD.value, "desc": "微信/支付宝"},
+            {"name": "10万并发", "tag": FeatureTag.CUSTOM.value, "desc": "标准版1万，需定制扩展"},
+            {"name": "AI智能推荐", "tag": FeatureTag.UNSUPPORTED.value, "desc": "本期暂不支持"},
+            {"name": "提供源代码", "tag": FeatureTag.UNSUPPORTED.value, "desc": "企业政策不允许"},
+        ]
 
-    prd_features = [
-        {"name": "课程管理", "tag": FeatureTag.STANDARD.value, "desc": "标准课程CRUD"},
-        {"name": "排课系统", "tag": FeatureTag.STANDARD.value, "desc": "日历式排课"},
-        {"name": "在线直播", "tag": FeatureTag.STANDARD.value, "desc": "标准直播能力"},
-        {"name": "作业批改", "tag": FeatureTag.STANDARD.value, "desc": "支持图文批改"},
-        {"name": "学习进度追踪", "tag": FeatureTag.STANDARD.value, "desc": "标准进度追踪"},
-        {"name": "数据看板", "tag": FeatureTag.STANDARD.value, "desc": "标准BI看板"},
-        {"name": "支付系统", "tag": FeatureTag.STANDARD.value, "desc": "微信/支付宝"},
-        {"name": "10万并发", "tag": FeatureTag.CUSTOM.value, "desc": "标准版1万，需定制扩展"},
-        {"name": "AI智能推荐", "tag": FeatureTag.UNSUPPORTED.value, "desc": "本期暂不支持"},
-        {"name": "提供源代码", "tag": FeatureTag.UNSUPPORTED.value, "desc": "企业政策不允许"},
-    ]
     tag_counts = {}
     for feat in prd_features:
         tag_counts[feat["tag"]] = tag_counts.get(feat["tag"], 0) + 1
-    logger.info("[PM Agent] 功能点标注完成, 共 %d 个:", len(prd_features))
+    logger.info("[PM Agent] PRD 生成完成, 功能点=%d", len(prd_features))
     for tag, count in tag_counts.items():
         logger.info("[PM Agent]   %s: %d 个", tag, count)
 
@@ -241,6 +259,25 @@ def pm_agent(state: SpecMindState) -> dict:
         "audit_snapshots": [_make_snapshot("pm_agent")],
         "current_node": "pm_agent",
     }
+
+
+def _parse_llm_features(llm_text: str) -> list:
+    """尝试从 LLM 返回文本中提取功能点列表。"""
+    import json
+    # 尝JSON 提取
+    try:
+        # 查找 JSON 数组或对象
+        start = llm_text.find("[")
+        end = llm_text.rfind("]") + 1
+        if start >= 0 and end > start:
+            data = json.loads(llm_text[start:end])
+            if isinstance(data, list):
+                return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 回退：返回简单结构
+    return [{"name": "LLM 输出", "tag": FeatureTag.STANDARD.value,
+             "desc": llm_text[:200]}]
 
 
 # ============================================================
@@ -390,38 +427,53 @@ def contract_agent(state: SpecMindState) -> dict:
 # Review Agent - 多维评审
 # ============================================================
 def review_agent(state: SpecMindState) -> dict:
-    """Review Agent：Tech/Design/QA 三维评审。"""
+    """Review Agent：调用 LLM 进行 Tech/Design/QA 三维评审。"""
     logger.info("=" * 60)
     logger.info("[Review Agent] 节点启动 - 多维评审 (Tech/Design/QA)")
-    logger.info("[Review Agent] 输入: prd 模块数=%d, prd_features 数量=%d",
-                len(state.get("prd", {})), len(state.get("prd_features", [])))
+    prd = state.get("prd", {})
+    features = state.get("prd_features", [])
 
-    review_comments = {
-        "tech": [
-            "直播模块建议使用 WebRTC + SFU 架构",
-            "10万并发需独立评估，建议分阶段扩容",
-            "支付系统需对接第三方支付网关，预留2周联调",
-        ],
-        "design": [
-            "学生端建议增加学习日历可视化",
-            "教师排课界面交互复杂，建议简化为拖拽式",
-            "数据看板需明确核心指标优先级",
-        ],
-        "qa": [
-            "直播并发测试需覆盖1000人场景",
-            "支付流程需覆盖异常订单回滚",
-            "未成年人信息采集需增加合规测试用例",
-        ],
-    }
+    llm_reply = ""
+    try:
+        from agents.prompts import build_review_prompt
+        from agents.llm_client import invoke_llm
+        prd_text = str(prd)
+        prompt = build_review_prompt(prd_text, features)
+        logger.info("[Review Agent] Prompt 构建完成, 长度=%d", len(prompt))
+        llm_reply = invoke_llm("review", prompt)
+        logger.info("[Review Agent] LLM 返回 %d 字符", len(llm_reply))
+    except Exception as e:
+        logger.error("[Review Agent] LLM 调用失败，回退到 mock: %s", e)
 
-    logger.info("[Review Agent] 评审意见生成完成:")
+    if llm_reply:
+        review_pass = "不通过" not in llm_reply[:500]
+        review_comments = {"tech": [llm_reply[:300]],
+                           "design": ["见 LLM 完整输出"],
+                           "qa": ["见 LLM 完整输出"]}
+    else:
+        review_comments = {
+            "tech": [
+                "直播模块建议使用 WebRTC + SFU 架构",
+                "10万并发需独立评估，建议分阶段扩容",
+                "支付系统需对接第三方支付网关，预留2周联调",
+            ],
+            "design": [
+                "学生端建议增加学习日历可视化",
+                "教师排课界面交互复杂，建议简化为拖拽式",
+                "数据看板需明确核心指标优先级",
+            ],
+            "qa": [
+                "直播并发测试需覆盖1000人场景",
+                "支付流程需覆盖异常订单回滚",
+                "未成年人信息采集需增加合规测试用例",
+            ],
+        }
+        review_pass = True
+
+    logger.info("[Review Agent] 评审结论: %s", "通过" if review_pass else "不通过")
     for dimension, comments in review_comments.items():
         logger.info("[Review Agent]   %s: %d 条意见", dimension.upper(), len(comments))
-        for c in comments:
-            logger.info("[Review Agent]     - %s", c)
 
-    review_pass = True
-    logger.info("[Review Agent] 评审结论: %s", "通过" if review_pass else "不通过")
     logger.info("[Review Agent] 节点完成")
     logger.info("=" * 60)
 
@@ -436,25 +488,57 @@ def review_agent(state: SpecMindState) -> dict:
 # Planner Agent - 交付计划
 # ============================================================
 def planner_agent(state: SpecMindState) -> dict:
-    """Planner Agent：生成配套交付计划。"""
+    """Planner Agent：调用 LLM 生成交付计划。"""
     logger.info("=" * 60)
     logger.info("[Planner Agent] 节点启动 - 交付计划生成")
-    logger.info("[Planner Agent] 输入: prd 模块数=%d", len(state.get("prd", {})))
+    prd = state.get("prd", {})
 
-    delivery_plan = [
-        {"phase": "需求确认", "duration": "1周", "deliverable": "PRD 终稿 + 评审记录"},
-        {"phase": "设计阶段", "duration": "2周", "deliverable": "UI 设计稿 + 技术方案"},
-        {"phase": "开发阶段", "duration": "3周", "deliverable": "核心功能代码 + 单元测试"},
-        {"phase": "联调测试", "duration": "1周", "deliverable": "集成测试报告 + Bug 修复"},
-        {"phase": "上线交付", "duration": "1周", "deliverable": "生产环境部署 + 验收文档"},
-    ]
+    llm_reply = ""
+    try:
+        from agents.prompts import build_planner_prompt
+        from agents.llm_client import invoke_llm
+        prd_text = str(prd)
+        prompt = build_planner_prompt(prd_text)
+        logger.info("[Planner Agent] Prompt 构建完成, 长度=%d", len(prompt))
+        llm_reply = invoke_llm("planner", prompt)
+        logger.info("[Planner Agent] LLM 返回 %d 字符", len(llm_reply))
+    except Exception as e:
+        logger.error("[Planner Agent] LLM 调用失败，回退到 mock: %s", e)
 
-    total_weeks = sum(int(p["duration"].replace("周", "")) for p in delivery_plan)
+    if llm_reply:
+        import json
+        delivery_plan = _parse_llm_features(llm_reply)
+    else:
+        delivery_plan = [
+            {"phase": "需求确认", "duration": "1周", "deliverable": "PRD 终稿 + 评审记录"},
+            {"phase": "设计阶段", "duration": "2周", "deliverable": "UI 设计稿 + 技术方案"},
+            {"phase": "开发阶段", "duration": "3周", "deliverable": "核心功能代码 + 单元测试"},
+            {"phase": "联调测试", "duration": "1周", "deliverable": "集成测试报告 + Bug 修复"},
+            {"phase": "上线交付", "duration": "1周", "deliverable": "生产环境部署 + 验收文档"},
+        ]
+
+    # 安全计算总时长（处理 LLM 输出格式多样化："3周"/3/"3" 均接受）
+    def _parse_weeks(item: dict) -> int:
+        for key in ("duration", "weeks"):
+            val = item.get(key)
+            if val is None:
+                continue
+            if isinstance(val, (int, float)):
+                return int(val)
+            if isinstance(val, str):
+                return int(val.replace("周", "").replace("周", "").strip() or "0")
+        return 0
+    total_weeks = sum(_parse_weeks(p) for p in delivery_plan)
+
     logger.info("[Planner Agent] 交付计划生成完成, 共 %d 阶段, 总工期 %d 周:",
                 len(delivery_plan), total_weeks)
     for phase in delivery_plan:
-        logger.info("[Planner Agent]   %s (%s): %s",
-                    phase["phase"], phase["duration"], phase["deliverable"])
+        dur = phase.get("duration", phase.get("weeks", "N/A"))
+        # dur 可能是 int/str，统一转为字符串用于日志
+        dur_str = f"{dur}周" if isinstance(dur, (int, float)) else str(dur)
+        ph = phase.get("phase", phase.get("name", "?"))
+        dlv = phase.get("deliverable", phase.get("deliverables", "?"))
+        logger.info("[Planner Agent]   %s (%s): %s", ph, dur_str, dlv)
 
     logger.info("[Planner Agent] 节点完成")
     logger.info("=" * 60)
