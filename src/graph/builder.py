@@ -124,10 +124,19 @@ def build_graph(use_checkpointer: bool = True) -> StateGraph:
         data_dir.mkdir(exist_ok=True)
         db_path = str(data_dir / "langgraph_checkpoints.db")
 
+        # 关闭旧连接（配置变更重建图时避免泄漏）
+        global _checkpoint_conn
+        if _checkpoint_conn is not None:
+            try:
+                _checkpoint_conn.close()
+            except Exception:
+                pass
+            _checkpoint_conn = None
+
         # 使用 SqliteSaver（同步上下文管理器）
         import sqlite3
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
+        _checkpoint_conn = sqlite3.connect(db_path, check_same_thread=False)
+        checkpointer = SqliteSaver(_checkpoint_conn)
         checkpointer.setup()
 
         compiled = graph.compile(checkpointer=checkpointer)
@@ -185,6 +194,20 @@ def build_resume_graph() -> StateGraph:
 # 全局编译图实例（延迟初始化）
 _compiled_graph = None
 _resume_graph = None
+# checkpointer SQLite 连接引用（用于退出时关闭，避免文件句柄泄漏）
+_checkpoint_conn = None
+
+
+def close_checkpointer() -> None:
+    """关闭 checkpointer SQLite 连接，应用退出时调用。"""
+    global _checkpoint_conn
+    if _checkpoint_conn is not None:
+        try:
+            _checkpoint_conn.close()
+            logger.info("[Builder] checkpointer SQLite 连接已关闭")
+        except Exception as e:
+            logger.warning("[Builder] 关闭 checkpointer 连接失败: %s", e)
+        _checkpoint_conn = None
 
 
 def get_compiled_graph() -> StateGraph:

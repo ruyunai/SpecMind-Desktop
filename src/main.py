@@ -51,6 +51,10 @@ def main() -> int:
     window = MainWindow()
     window.show()
 
+    # 应用退出时关闭 checkpointer SQLite 连接，避免文件句柄泄漏
+    from graph.builder import close_checkpointer
+    app.aboutToQuit.connect(close_checkpointer)
+
     return app.exec()
 
 
