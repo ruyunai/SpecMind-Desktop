@@ -33,12 +33,18 @@ class ChromaStore:
             persist_path: 持久化目录路径（默认使用项目根 data/chroma）
         """
         import chromadb
+        from chromadb.config import Settings
         if not persist_path:
             persist_path = self._DEFAULT_PERSIST
         Path(persist_path).mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=persist_path)
+        # 禁用遥测：符合项目「禁止云端上报」硬约束
+        # 同时规避 chromadb 1.5.x 遥测子模块 posthog 缺失导致的 ImportError
+        self._client = chromadb.PersistentClient(
+            path=persist_path,
+            settings=Settings(anonymized_telemetry=False),
+        )
         self._collections: Dict[str, object] = {}
-        logger.info("ChromaDB 初始化: persist=%s", persist_path)
+        logger.info("ChromaDB 初始化: persist=%s, telemetry=off", persist_path)
 
     def _get_collection(self, category) -> object:
         """获取或创建指定类别的集合。
