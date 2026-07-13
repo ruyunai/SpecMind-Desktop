@@ -40,8 +40,15 @@ class ChromaStore:
         self._collections: Dict[str, object] = {}
         logger.info("ChromaDB 初始化: persist=%s", persist_path)
 
-    def _get_collection(self, category: AssetCategory) -> object:
-        """获取或创建指定类别的集合。"""
+    def _get_collection(self, category) -> object:
+        """获取或创建指定类别的集合。
+
+        Args:
+            category: AssetCategory 枚举或字符串（如 "regulation"）
+        """
+        # 兼容字符串输入
+        if isinstance(category, str):
+            category = AssetCategory(category)
         name = f"specmind_{category.value}"
         if name not in self._collections:
             self._collections[name] = self._client.get_or_create_collection(
@@ -111,6 +118,9 @@ class ChromaStore:
         Returns:
             实际新增的文档数（跳过已存在的）
         """
+        # 兼容字符串输入（调用方可传 "regulation" 或 AssetCategory.REGULATION）
+        if isinstance(category, str):
+            category = AssetCategory(category)
         collection = self._get_collection(category)
         added = 0
 
@@ -149,21 +159,25 @@ class ChromaStore:
         category: AssetCategory,
         top_k: int = 5,
         where: Optional[dict] = None,
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """向量检索。
 
         Args:
             query_text: 查询文本
-            category: 资产类别
+            category: 资产类别（AssetCategory 或字符串）
             top_k: 返回结果数
             where: 元数据过滤条件
 
         Returns:
             检索结果列表，每项含 text/metadata/distance
         """
+        if isinstance(category, str):
+            category = AssetCategory(category)
         collection = self._get_collection(category)
         if collection.count() == 0:
-            logger.warning("集合为空: %s", category.value)
+            # category 可能仍是字符串，兼容处理
+            cat_name = category.value if isinstance(category, AssetCategory) else category
+            logger.warning("集合为空: %s", cat_name)
             return []
 
         results = collection.query(
@@ -221,3 +235,23 @@ class ChromaStore:
             if is_expired(meta):
                 expired.append(meta)
         return expired
+
+    def delete_by_source(self, source: str, category: AssetCategory) -> int:
+        """按来源名称删除文档。
+
+        Args:
+            source: 文档 source 字段值
+            category: 资产类别
+
+        Returns:
+            删除的文档数量
+        """
+        if isinstance(category, str):
+            category = AssetCategory(category)
+        collection = self._get_collection(category)
+        result = collection.get(where={"source": source})
+        ids = result.get("ids", [])
+        if ids:
+            collection.delete(ids=ids)
+            logger.info("删除文档: source=%s, category=%s, 删除=%d 条", source, category.value, len(ids))
+        return len(ids)

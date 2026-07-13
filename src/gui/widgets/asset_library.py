@@ -70,6 +70,11 @@ class AssetLibraryPanel(QWidget):
         self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.clicked.connect(self.refresh)
         search_bar.addWidget(self.refresh_btn)
+
+        self.upload_btn = QPushButton("上传")
+        self.upload_btn.clicked.connect(self._on_upload)
+        self.upload_btn.setToolTip("上传企业自有文档到知识库（支持 Word/PDF/TXT/JSON）")
+        search_bar.addWidget(self.upload_btn)
         layout.addLayout(search_bar)
 
         hint = QLabel("双击分类展开真实数据，双击资产查看详情")
@@ -172,6 +177,15 @@ class AssetLibraryPanel(QWidget):
             return
         data = item.data(1, Qt.UserRole) or {}
         self.asset_clicked.emit(data.get("category", ""), data.get("source", ""))
+
+    def _on_upload(self) -> None:
+        """打开上传对话框。"""
+        from gui.dialogs.upload_dialog import UploadDialog
+        dialog = UploadDialog(parent=self)
+        if dialog.exec():
+            # 上传成功后刷新资产库
+            self._loaded_categories.clear()
+            self.refresh()
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """双击资产项 - 打开详情对话框。"""

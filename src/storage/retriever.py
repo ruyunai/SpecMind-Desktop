@@ -71,6 +71,11 @@ class HybridRetriever:
         """
         self._ensure_stores()
 
+        # 兼容字符串输入
+        if isinstance(category, str):
+            from storage.schema import AssetCategory
+            category = AssetCategory(category)
+
         # 1. 向量检索
         vector_results = self._chroma.query(
             query_text=query,
