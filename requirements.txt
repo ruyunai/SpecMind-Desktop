@@ -21,3 +21,6 @@ PyPDF2==3.0.1
 
 # 打包
 pyinstaller==6.21.0
+
+# 测试
+pytest==9.1.1
