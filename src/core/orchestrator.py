@@ -2,7 +2,7 @@
 
 信号：
 - node_started(node_name): 节点开始执行
-- node_finished(node_name): 节点执行完成
+- node_finished(node_name, elapsed_ms): 节点执行完成，含耗时
 - workflow_blocked(reason, state): Legal 高风险阻断，等待人工确认
 - workflow_complete(state): 全流程完成
 - log_message(message): 实时日志
@@ -45,7 +45,7 @@ class WorkflowOrchestrator(QThread):
 
     # 信号定义
     node_started = Signal(str)
-    node_finished = Signal(str)
+    node_finished = Signal(str, int)  # node_name, elapsed_ms
     progress_updated = Signal(int, int, str)  # current_step, total_steps, message
     workflow_blocked = Signal(str, dict)   # 阻断原因 + 当前 State
     workflow_complete = Signal(dict)       # 最终 State
@@ -202,7 +202,7 @@ class WorkflowOrchestrator(QThread):
                     elapsed_ms=elapsed,
                 )
 
-                self.node_finished.emit(node_name)
+                self.node_finished.emit(node_name, elapsed)
                 self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")
                 self._emit_progress(node_name)
 
@@ -255,7 +255,7 @@ class WorkflowOrchestrator(QThread):
                     elapsed_ms=elapsed,
                 )
 
-                self.node_finished.emit(node_name)
+                self.node_finished.emit(node_name, elapsed)
                 self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")
                 self._emit_progress(node_name)
 

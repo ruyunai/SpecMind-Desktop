@@ -523,6 +523,69 @@ class SqliteStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_node_timing_stats(self, run_id: str = "") -> List[Dict]:
+        """从审计日志聚合节点耗时统计。
+
+        Args:
+            run_id: 指定运行 ID（空字符串则返回所有运行汇总）
+
+        Returns:
+            [{node_name, total_ms, avg_ms, min_ms, max_ms, count, error_count}]
+        """
+        where = "WHERE run_id = ? AND event_type = 'exit'" if run_id else "WHERE event_type = 'exit'"
+        params = (run_id,) if run_id else ()
+        rows = self._conn.execute(
+            f"SELECT node_name, "
+            f"SUM(elapsed_ms) AS total_ms, "
+            f"CAST(AVG(elapsed_ms) AS INTEGER) AS avg_ms, "
+            f"MIN(elapsed_ms) AS min_ms, " 
+            f"MAX(elapsed_ms) AS max_ms, "
+            f"COUNT(*) AS cnt "
+            f"FROM audit_logs {where} "
+            f"GROUP BY node_name ORDER BY total_ms DESC",
+            params,
+        ).fetchall()
+        return [
+            {**dict(row), "error_count": self._count_errors(run_id, row["node_name"])}
+            for row in rows
+        ]
+
+    def _count_errors(self, run_id: str, node_name: str) -> int:
+        """统计某节点在某次运行中的错误数。"""
+        where = "WHERE run_id = ? AND node_name = ? AND event_type = 'error'" if run_id else \
+                "WHERE node_name = ? AND event_type = 'error'"
+        params = (run_id, node_name) if run_id else (node_name,)
+        row = self._conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM audit_logs {where}", params
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def get_workflow_summary(self, run_id: str) -> Dict:
+        """获取单次工作流的完整摘要。
+
+        Returns:
+            {run_id, total_elapsed_ms, node_count, status, first_ts, last_ts}
+        """
+        row = self._conn.execute(
+            "SELECT run_id, "
+            "SUM(elapsed_ms) AS total_elapsed_ms, "
+            "COUNT(DISTINCT node_name) AS node_count, "
+            "MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts "
+            "FROM audit_logs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if not row:
+            return {}
+        result = dict(row)
+        # 找到最后一个 event_type（状态）
+        last = self._conn.execute(
+            "SELECT event_type FROM audit_logs WHERE run_id = ? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        result["status"] = last["event_type"] if last else "unknown"
+        return result
+
     def close(self) -> None:
         """关闭连接。"""
         self._conn.close()
