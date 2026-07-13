@@ -170,14 +170,16 @@ pyinstaller --noconfirm SpecMindDesktop.spec
 
 ### v0.2.0（2026-07-14）
 
-**架构升级 + 人工测试迭代修复**
+**架构升级 + 人工测试迭代修复 + exe 打包链路修复**
 
 - 🔧 **核心架构变更**：LLM 知识为主 + 企业资产库为辅（替代原 RAG 强约束设计）
 - 📄 **文档解析增强**：docx 表格提取 + pdf 换用 pdfplumber（表格还原准确率 90%+）
 - 🖥️ **UI 优化**：Interrupt 阻断弹窗改为可滚动自定义对话框
-- 🐛 修复 BUG-023 ~ BUG-029 共 7 项（1 致命 + 6 高危）
-- 左栏资产库补充「历史 PRD」「通用文档」分类
-- 交付计划渲染崩溃修复 + JSON 输出残留清理
+- 🐛 修复 BUG-023 ~ BUG-030 共 8 项（2 致命 + 6 高危）
+  - BUG-030（致命）：exe 打包后 LLM 静默回退 mock 数据 → SSL 证书打包 + llm_errors 追踪 + 显式标注
+  - BUG-029：Interrupt 弹窗内容过长无法滚动
+  - BUG-026（致命）：LLM 只参考企业资产库 → 全部 Prompt 重写
+- 📦 **exe 打包修复**：collect_all(chromadb) + certifi 证书 + openai/httpx 全量打包
 
 详见 [Release v0.2.0](https://github.com/ruyunai/SpecMind-Desktop/releases/tag/v0.2.0)。
 
