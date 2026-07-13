@@ -19,7 +19,7 @@
 | 项目 | 说明 |
 |------|------|
 | **下载链接** | [SpecMindDesktop.exe](https://github.com/ruyunai/SpecMind-Desktop/releases/latest/download/SpecMindDesktop.exe) |
-| **文件大小** | 108.67 MB |
+| **文件大小** | 130.52 MB |
 | **系统要求** | Windows 10 / 11 64 位 |
 | **无需安装** | 双击即用，无需 Python 或任何依赖 |
 
