@@ -22,9 +22,34 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QGroupBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QObject
 
 from gui.services.upload_service import ingest_document, CATEGORY_MAP
+
+
+class _UploadWorker(QObject):
+    """后台上传 Worker - 在 QThread 中执行 ingest_document。
+
+    Signals:
+        finished(IngestResult): 上传完成（含成功/失败信息，错误看 result.errors）
+        error(str): 上传过程抛出未捕获异常
+    """
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, file_path: str, category: str, doc_name: str | None) -> None:
+        super().__init__()
+        self._file_path = file_path
+        self._category = category
+        self._doc_name = doc_name
+
+    def run(self) -> None:
+        """执行上传（在后台线程运行）。"""
+        try:
+            result = ingest_document(self._file_path, self._category, self._doc_name)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(f"{type(e).__name__}: {e}")
 
 
 class UploadDialog(QDialog):
@@ -36,6 +61,8 @@ class UploadDialog(QDialog):
         self.setMinimumWidth(520)
         self.setMinimumHeight(400)
         self._file_path: str = ""
+        self._worker_thread: QThread | None = None
+        self._worker: _UploadWorker | None = None
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -127,9 +154,13 @@ class UploadDialog(QDialog):
                 self._name_edit.setText(name)
 
     def _on_upload(self) -> None:
-        """执行上传。"""
+        """执行上传 - 后台线程处理避免 UI 冻结。"""
         if not self._file_path:
             QMessageBox.warning(self, "提示", "请先选择要上传的文档。")
+            return
+
+        # 防止并发重复上传
+        if self._worker_thread and self._worker_thread.isRunning():
             return
 
         # 解析分类
@@ -148,12 +179,26 @@ class UploadDialog(QDialog):
         self._log_text.clear()
         self._append_log(f"解析文档: {self._file_path}")
         self._append_log(f"分类: {category}, 名称: {doc_name or '(自动)'}")
-        self._append_log("正在分块 + 向量化 + 入库...")
+        self._append_log("正在分块 + 向量化 + 入库...（后台执行，UI 可响应）")
 
-        # 执行上传
-        result = ingest_document(self._file_path, category, doc_name)
+        # 创建后台线程执行上传
+        self._worker = _UploadWorker(self._file_path, category, doc_name)
+        self._worker_thread = QThread()
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_upload_finished)
+        self._worker.error.connect(self._on_upload_error)
+        # 线程结束后清理引用
+        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+        self._worker_thread.start()
 
-        # 显示结果
+    def _on_upload_finished(self, result) -> None:
+        """上传完成回调（主线程执行）。"""
+        # 优雅停止线程
+        if self._worker_thread:
+            self._worker_thread.quit()
+            self._worker_thread.wait(2000)
+
         self._progress_bar.hide()
         self._upload_btn.setEnabled(True)
 
@@ -176,6 +221,24 @@ class UploadDialog(QDialog):
         )
 
         self.accept()
+
+    def _on_upload_error(self, err_msg: str) -> None:
+        """上传异常回调（主线程执行）。"""
+        if self._worker_thread:
+            self._worker_thread.quit()
+            self._worker_thread.wait(2000)
+
+        self._progress_bar.hide()
+        self._upload_btn.setEnabled(True)
+        self._append_log(f"❌ 异常: {err_msg}")
+        QMessageBox.critical(self, "上传异常", f"上传过程异常: {err_msg}")
+
+    def closeEvent(self, event) -> None:
+        """关闭对话框时清理后台线程。"""
+        if self._worker_thread and self._worker_thread.isRunning():
+            self._worker_thread.quit()
+            self._worker_thread.wait(3000)
+        event.accept()
 
     def _append_log(self, msg: str) -> None:
         self._log_text.append(msg)
