@@ -198,6 +198,11 @@ def legal_agent_rag(state: SpecMindState) -> dict:
         else:
             risk_level = RiskLevel.LOW
             legal_blocked = False
+        # 空检索强阻断不可被 LLM 输出覆盖（项目约束：Legal 空检索必须阻断）
+        if should_block:
+            legal_blocked = True
+            risk_level = RiskLevel.HIGH
+            logger.warning("[Legal Agent-RAG] 检索结果为空，强制阻断（覆盖 LLM 输出）")
         legal_issues = [{"law": "LLM 分析", "issue": llm_reply[:500], "suggestion": "详见 LLM 输出"}]
     else:
         legal_issues = []
