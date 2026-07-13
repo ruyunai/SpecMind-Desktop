@@ -187,6 +187,8 @@ python -m storage.seed_data
 - 槽函数命名：`on_signal_name`（如 `on_node_started`、`on_workflow_complete`）
 - 长耗时操作必须移入 QThread，主线程只负责 UI 更新
 - Widget 必须设置 parent，定时器必须在不需要时停止
+- **closeEvent 线程终止三层策略**：`cancel()` 设置取消标志 + 解除阻塞 → `wait(3000)` 等待自然退出 → `terminate()` 强制终止兜底。禁止仅用 `quit()`（对自定义 run() 的 QThread 无效）
+- **QDialog 长耗时操作（如上传/导出）必须使用 QThread + Worker QObject 模式**：Worker 继承 QObject 含 `finished`/`error` 信号，`moveToThread` 后启动；主线程通过信号回调更新 UI，禁止在主线程同步调用
 
 ### 5.3 LangGraph 节点规范
 
@@ -308,9 +310,10 @@ SAR Agent → Legal Agent → [Interrupt 高风险阻断]
 ### 7.3 新增知识库分类
 
 1. `src/storage/schema.py` 的 `AssetCategory` 枚举新增成员
-2. `src/gui/widgets/asset_library.py` 的 `CATEGORY_GROUPS` 同步新增分组
+2. `src/gui/widgets/asset_library.py` 的 `CATEGORY_GROUPS` 同步新增分组（**key 必须严格等于 `AssetCategory.XXX.value`**，禁止使用变体如 `standard_feature` vs `feature`，否则 `AssetCategory(cat_key)` 抛 ValueError）
 3. `src/agents/query_rewriter.py` 关键词字典按需扩展
 4. 如需新解析规则，更新 `src/parsers/chunker.py`
+5. 上传对话框 `src/gui/dialogs/upload_dialog.py` 的 `QComboBox` 项需同步新增分类选项，格式 `"显示名 (key)"`
 
 ### 7.4 修改成本参数
 
@@ -414,7 +417,7 @@ summary = store.get_workflow_summary()
 
 1. 更新 `当前状态.md`（变更 + 下一步）
 2. 更新 `进度追踪.md`（完成/进行中/待做）
-3. Bug 修复追加到 `修复日志.md`（按 BUG-XXX 编号递增）
+3. Bug 修复追加到 `修复日志.md`（按 BUG-XXX 编号递增），每条记录必含：现象/根因/修复方案/是否成功/涉及文件/日期/备注
 
 ### 11.3 提交规范
 
