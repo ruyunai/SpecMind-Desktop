@@ -27,7 +27,7 @@ from PySide6.QtGui import QBrush, QColor
 
 # 资产分类定义（顺序 = 展示顺序）
 CATEGORY_GROUPS = [
-    ("标准功能清单", "standard_feature", "企业标准能力库（CRUD/排课/直播/作业/支付/看板等）"),
+    ("标准功能清单", "feature", "企业标准能力库（CRUD/排课/直播/作业/支付/看板等）"),
     ("法规库", "regulation", "本地法规库（个人信息保护法/数据安全法/未成年人保护法/广告法等）"),
     ("合同模板库", "contract", "标准合同模板（维护条款/性能条款/知识产权条款/定制条款）"),
 ]
