@@ -72,3 +72,6 @@ class SpecMindState(TypedDict, total=False):
     # === 审计（reducer: 并行节点追加合并） ===
     audit_snapshots: Annotated[List[Dict], operator.add]  # State 快照（并行安全）
     current_node: str                       # 当前执行节点
+
+    # === LLM 错误追踪（reducer: 并行节点追加合并） ===
+    llm_errors: Annotated[List[str], operator.add]  # LLM 调用失败信息（非空=有回退到 mock）

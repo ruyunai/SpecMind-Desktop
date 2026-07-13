@@ -213,6 +213,7 @@ def pm_agent(state: SpecMindState) -> dict:
 
     # 尝试调用 LLM
     llm_reply = ""
+    llm_errors: list = []
     try:
         from agents.prompts import build_pm_prompt
         from agents.llm_client import invoke_llm
@@ -221,11 +222,13 @@ def pm_agent(state: SpecMindState) -> dict:
         llm_reply = invoke_llm("pm", prompt)
         logger.info("[PM Agent] LLM 返回 %d 字符", len(llm_reply))
     except Exception as e:
-        logger.error("[PM Agent] LLM 调用失败，回退到 mock: %s", e)
+        error_msg = f"[PM Agent] LLM 调用失败: {type(e).__name__}: {e}"
+        logger.error(error_msg)
+        llm_errors.append(error_msg)
 
-    # 回退：mock PRD
+    # 回退：mock PRD（标注 LLM 失败）
     if not llm_reply:
-        logger.info("[PM Agent] 加载企业标准 PRD 模板 (8 模块)...")
+        logger.warning("[PM Agent] ⚠ 使用 mock 回退数据（LLM 不可用）")
     required_modules = ["背景目标", "用户故事", "功能列表", "In_Out范围",
                         "验收标准", "非功能需求", "埋点要求", "风险章节"]
 
@@ -244,14 +247,14 @@ def pm_agent(state: SpecMindState) -> dict:
             prd_features = _parse_llm_features(llm_reply)
     else:
         prd = {
-            "背景目标": "为 K12 教育机构提供一站式在线教学管理平台，解决排课混乱、教学数据分散问题。",
-            "用户故事": "作为教师，我希望能够创建课程并排课，以便管理教学计划；作为学生，我希望能够在线学习并提交作业，以便完成学习任务。",
-            "功能列表": "1.课程管理 2.排课系统 3.在线直播 4.作业批改 5.学习进度 6.数据看板 7.支付系统 8.账号管理",
-            "In_Out范围": "In: 教学管理核心流程、支付、数据看板；Out: 家校沟通、AI 推荐、多语言",
-            "验收标准": "直播延迟≤2s；支持1000人同时在线；作业批改支持图片/文档；支付支持微信/支付宝",
-            "非功能需求": "响应时间≤500ms；可用性99.9%；数据加密存储；支持Chrome/Edge/Safari",
-            "埋点要求": "课程创建、直播参与、作业提交、支付完成 4 个核心事件埋点",
-            "风险章节": "1.10万并发需定制（标准版上限1万）2.源代码不对外提供 3.首年免费维护（非终身）",
+            "背景目标": "⚠ LLM 调用失败，以下为 mock 回退数据！请检查 API Key 配置（Ctrl+,）。\n原始需求: " + cleaned[:200],
+            "用户故事": "（mock 回退）作为教师，我希望能够创建课程并排课，以便管理教学计划",
+            "功能列表": "（mock 回退）1.课程管理 2.排课系统 3.在线直播 4.作业批改 5.学习进度 6.数据看板 7.支付系统 8.账号管理",
+            "In_Out范围": "（mock 回退）In: 教学管理核心流程；Out: AI 推荐",
+            "验收标准": "（mock 回退）直播延迟≤2s；支持1000人同时在线",
+            "非功能需求": "（mock 回退）响应时间≤500ms；可用性99.9%",
+            "埋点要求": "（mock 回退）课程创建、直播参与、作业提交、支付完成",
+            "风险章节": "⚠ LLM 不可用，无法生成真实风险分析。错误信息: " + (llm_errors[0] if llm_errors else "未知"),
         }
         prd_features = [
             {"name": "课程管理", "tag": FeatureTag.STANDARD.value, "desc": "标准课程CRUD"},
@@ -282,6 +285,7 @@ def pm_agent(state: SpecMindState) -> dict:
         "prd_features": prd_features,
         "audit_snapshots": [_make_snapshot("pm_agent", start_time)],
         "current_node": "pm_agent",
+        "llm_errors": llm_errors,
     }
 
 
@@ -542,6 +546,7 @@ def review_agent(state: SpecMindState) -> dict:
     features = state.get("prd_features", [])
 
     llm_reply = ""
+    llm_errors: list = []
     try:
         from agents.prompts import build_review_prompt
         from agents.llm_client import invoke_llm
@@ -551,7 +556,9 @@ def review_agent(state: SpecMindState) -> dict:
         llm_reply = invoke_llm("review", prompt)
         logger.info("[Review Agent] LLM 返回 %d 字符", len(llm_reply))
     except Exception as e:
-        logger.error("[Review Agent] LLM 调用失败，回退到 mock: %s", e)
+        error_msg = f"[Review Agent] LLM 调用失败: {type(e).__name__}: {e}"
+        logger.error(error_msg)
+        llm_errors.append(error_msg)
 
     if llm_reply:
         # 解析 LLM 返回的 JSON 结构
@@ -571,21 +578,9 @@ def review_agent(state: SpecMindState) -> dict:
                                "qa": ["见 LLM 完整输出"]}
     else:
         review_comments = {
-            "tech": [
-                "直播模块建议使用 WebRTC + SFU 架构",
-                "10万并发需独立评估，建议分阶段扩容",
-                "支付系统需对接第三方支付网关，预留2周联调",
-            ],
-            "design": [
-                "学生端建议增加学习日历可视化",
-                "教师排课界面交互复杂，建议简化为拖拽式",
-                "数据看板需明确核心指标优先级",
-            ],
-            "qa": [
-                "直播并发测试需覆盖1000人场景",
-                "支付流程需覆盖异常订单回滚",
-                "未成年人信息采集需增加合规测试用例",
-            ],
+            "tech": ["⚠ LLM 不可用 - mock 回退数据"],
+            "design": ["⚠ LLM 不可用 - mock 回退数据"],
+            "qa": ["⚠ LLM 不可用 - mock 回退数据"],
         }
         review_pass = True
 
@@ -600,6 +595,7 @@ def review_agent(state: SpecMindState) -> dict:
         "review_comments": review_comments,
         "review_pass": review_pass,
         "audit_snapshots": [_make_snapshot("review_agent", start_time)],
+        "llm_errors": llm_errors,
     }
 
 
@@ -623,17 +619,15 @@ def planner_agent(state: SpecMindState) -> dict:
         llm_reply = invoke_llm("planner", prompt)
         logger.info("[Planner Agent] LLM 返回 %d 字符", len(llm_reply))
     except Exception as e:
-        logger.error("[Planner Agent] LLM 调用失败，回退到 mock: %s", e)
+        error_msg = f"[Planner Agent] LLM 调用失败: {type(e).__name__}: {e}"
+        logger.error(error_msg)
+        llm_errors.append(error_msg)
 
     if llm_reply:
         delivery_plan = _parse_llm_delivery_plan(llm_reply)
     else:
         delivery_plan = [
-            {"phase": "需求确认", "duration": "1周", "deliverable": "PRD 终稿 + 评审记录"},
-            {"phase": "设计阶段", "duration": "2周", "deliverable": "UI 设计稿 + 技术方案"},
-            {"phase": "开发阶段", "duration": "3周", "deliverable": "核心功能代码 + 单元测试"},
-            {"phase": "联调测试", "duration": "1周", "deliverable": "集成测试报告 + Bug 修复"},
-            {"phase": "上线交付", "duration": "1周", "deliverable": "生产环境部署 + 验收文档"},
+            {"phase": "⚠ LLM 不可用", "duration": "0周", "deliverable": "mock 回退数据，请检查 API Key 配置"},
         ]
 
     # 安全计算总时长（处理 LLM 输出格式多样化："3周"/3/"3" 均接受）
@@ -666,4 +660,5 @@ def planner_agent(state: SpecMindState) -> dict:
         "delivery_plan": delivery_plan,
         "audit_snapshots": [_make_snapshot("planner_agent", start_time)],
         "current_node": "planner_agent",
+        "llm_errors": llm_errors,
     }

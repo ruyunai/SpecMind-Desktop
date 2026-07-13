@@ -163,6 +163,15 @@ class WorkflowOrchestrator(QThread):
             )
             self._emit_log("[Orchestrator] ✅ 工作流全部完成")
             self._emit_log(f"[Orchestrator] 审计快照数: {len(self._state.get('audit_snapshots', []))}")
+
+            # 检查 LLM 错误
+            llm_errors = self._state.get("llm_errors", [])
+            if llm_errors:
+                self._emit_log(f"[Orchestrator] ⚠ 检测到 {len(llm_errors)} 个 LLM 调用失败:")
+                for err in llm_errors:
+                    self._emit_log(f"[Orchestrator]   • {err}")
+                self._emit_log("[Orchestrator] ⚠ 输出内容包含 mock 回退数据，请检查 API Key 配置（Ctrl+,）")
+
             self.workflow_complete.emit(dict(self._state))
 
         except Exception as e:
@@ -286,14 +295,19 @@ class WorkflowOrchestrator(QThread):
         return self._state
 
     def _merge_state_update(self, update: dict) -> None:
-        """合并 State 更新，audit_snapshots 累加而非覆盖。"""
-        if "audit_snapshots" in update:
-            snapshots = self._state.get("audit_snapshots", [])
-            snapshots = snapshots + update["audit_snapshots"]
-            self._state["audit_snapshots"] = snapshots
+        """合并 State 更新，audit_snapshots 和 llm_errors 累加而非覆盖。"""
+        # 需要累加的列表字段（有 reducer 的字段）
+        accumulative_keys = {"audit_snapshots", "llm_errors"}
+        has_accumulative = any(k in update for k in accumulative_keys)
+
+        if has_accumulative:
+            for key in accumulative_keys:
+                if key in update:
+                    existing = self._state.get(key, [])
+                    self._state[key] = existing + update[key]
             # 其他字段正常更新
             for k, v in update.items():
-                if k != "audit_snapshots":
+                if k not in accumulative_keys:
                     self._state[k] = v
         else:
             self._state.update(update)
