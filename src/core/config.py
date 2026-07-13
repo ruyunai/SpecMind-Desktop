@@ -72,9 +72,13 @@ class CostConfig:
 
 
 def _get_app_data_dir() -> Path:
-    """获取应用数据目录（%APPDATA%/SpecMindDesktop/）。"""
-    appdata = os.environ.get("APPDATA", str(Path.home()))
-    return Path(appdata) / "SpecMindDesktop"
+    """获取应用数据目录。
+
+    - 便携模式：exe 同级
+    - 其他：%APPDATA%/SpecMindDesktop/
+    """
+    from core import get_app_root
+    return get_app_root()
 
 
 def _default_agents() -> Dict[str, AgentModelConfig]:

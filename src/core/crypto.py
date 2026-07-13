@@ -26,9 +26,13 @@ logger = setup_logger("specmind.core")
 # ---- 密钥种子文件管理 ----
 
 def _get_key_seed_path() -> Path:
-    """获取 key_seed 文件路径（%APPDATA%/SpecMindDesktop/config/.keyseed）。"""
-    appdata = os.environ.get("APPDATA", str(Path.home()))
-    config_dir = Path(appdata) / "SpecMindDesktop" / "config"
+    """获取 key_seed 文件路径。
+
+    - 便携模式：exe 同级 config/.keyseed
+    - 其他：%APPDATA%/SpecMindDesktop/config/.keyseed
+    """
+    from core import get_app_root
+    config_dir = get_app_root() / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / ".keyseed"
 
