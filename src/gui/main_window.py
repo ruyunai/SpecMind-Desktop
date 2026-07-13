@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStatusBar,
     QMenuBar,
-    QMessageBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -172,29 +171,13 @@ class MainWindow(QMainWindow):
         self.workspace_panel.on_workflow_blocked(reason)
         self.statusBar().showMessage(f"⛔ 工作流阻断: {reason}")
 
-        # 展示 Legal 风险详情
+        # 弹出自定义可滚动 Interrupt 确认对话框
+        from gui.dialogs.interrupt_dialog import InterruptConfirmDialog
         issues = state.get("legal_issues", [])
-        issues_text = ""
-        for i, issue in enumerate(issues, 1):
-            issues_text += f"  {i}. {issue.get('law', '')}\n"
-            issues_text += f"     问题: {issue.get('issue', '')}\n"
-            issues_text += f"     建议: {issue.get('suggestion', '')}\n\n"
+        dialog = InterruptConfirmDialog(reason, issues, self)
+        dialog.exec()
 
-        # 弹出 Interrupt 确认对话框（确认/拒绝）
-        reply = QMessageBox.question(
-            self,
-            "⛔ 高风险阻断 - Interrupt 人工确认",
-            f"工作流被阻断！\n\n"
-            f"原因：{reason}\n\n"
-            f"Legal Agent 检测到以下合规问题：\n{issues_text}"
-            f"是否强制放行继续生成 PRD？\n\n"
-            f"⚠ Legal Agent 为辅助预检工具，不构成正式法律意见\n"
-            f"⚠ 强制放行需自行承担合规风险",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-
-        if reply == QMessageBox.Yes:
+        if dialog.confirmed:
             logger.info("[Main] 用户确认放行，继续执行 resume 图")
             self.statusBar().showMessage("用户确认放行，继续执行...")
             self.canvas_panel.reset_blocked_nodes()
