@@ -195,7 +195,11 @@ class WorkflowOrchestrator(QThread):
                     self._merge_state_update(node_update)
 
                 # 审计：记录 exit（带耗时）
-                elapsed = int((time.time() - entry_ts) * 1000)
+                # 优先从 audit_snapshots 读取节点内部测量的 elapsed_ms（准确），
+                # 回退到 stream 事件处理耗时（stream_mode=updates 滞后导致近零）
+                elapsed = self._extract_elapsed_ms(node_update, node_name)
+                if elapsed is None:
+                    elapsed = int((time.time() - entry_ts) * 1000)
                 store.add_audit_log(
                     self._run_id, node_name, "exit",
                     {"current_node": self._state.get("current_node", "")},
@@ -203,7 +207,7 @@ class WorkflowOrchestrator(QThread):
                 )
 
                 self.node_finished.emit(node_name, elapsed)
-                self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")
+                self._emit_log(f"[Orchestrator] ✅ {node_name} 完成 (耗时 {elapsed}ms)")
                 self._emit_progress(node_name)
 
         # 从 checkpointer 获取最终完整 State
@@ -248,7 +252,9 @@ class WorkflowOrchestrator(QThread):
                 if node_update:
                     self._merge_state_update(node_update)
 
-                elapsed = int((time.time() - entry_ts) * 1000)
+                elapsed = self._extract_elapsed_ms(node_update, node_name)
+                if elapsed is None:
+                    elapsed = int((time.time() - entry_ts) * 1000)
                 store.add_audit_log(
                     self._run_id, node_name, "exit",
                     {"current_node": self._state.get("current_node", "")},
@@ -256,7 +262,7 @@ class WorkflowOrchestrator(QThread):
                 )
 
                 self.node_finished.emit(node_name, elapsed)
-                self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")
+                self._emit_log(f"[Orchestrator] ✅ {node_name} 完成 (耗时 {elapsed}ms)")
                 self._emit_progress(node_name)
 
     def get_state(self) -> SpecMindState:
@@ -275,3 +281,26 @@ class WorkflowOrchestrator(QThread):
                     self._state[k] = v
         else:
             self._state.update(update)
+
+    def _extract_elapsed_ms(self, node_update: dict, node_name: str) -> int | None:
+        """从节点返回的 audit_snapshots 中提取 elapsed_ms。
+
+        节点函数内部通过 _make_snapshot(node, start_time) 计算的 elapsed_ms 是准确的
+        节点执行耗时，优先使用。stream_mode=updates 的 elapsed 是事件处理耗时（近零）。
+
+        Args:
+            node_update: 节点返回的部分 State dict
+            node_name: 节点名（用于匹配 audit_snapshots 中的 node 字段）
+
+        Returns:
+            elapsed_ms（int）或 None（无匹配时回退到 stream 耗时）
+        """
+        if not node_update:
+            return None
+        snapshots = node_update.get("audit_snapshots", [])
+        for snap in reversed(snapshots):
+            if isinstance(snap, dict) and snap.get("node") == node_name:
+                elapsed = snap.get("elapsed_ms")
+                if isinstance(elapsed, int) and elapsed >= 0:
+                    return elapsed
+        return None

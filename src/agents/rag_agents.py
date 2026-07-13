@@ -30,9 +30,19 @@ def get_retriever() -> HybridRetriever:
     return _retriever
 
 
-def _make_snapshot(node_name: str) -> dict:
-    """创建审计快照。"""
-    return {"node": node_name, "timestamp": time.time()}
+def _make_snapshot(node_name: str, start_time: float = None) -> dict:
+    """创建单条审计快照。
+
+    Args:
+        node_name: 节点名称
+        start_time: 节点开始执行的时间戳（time.time()），传入则计算 elapsed_ms。
+                    不传则 elapsed_ms 为 None（向后兼容）。
+    """
+    now = time.time()
+    snapshot = {"node": node_name, "timestamp": now}
+    if start_time is not None:
+        snapshot["elapsed_ms"] = int((now - start_time) * 1000)
+    return snapshot
 
 
 def _extract_contract_query_text(prd: dict, prd_features: list = None) -> str:
@@ -74,6 +84,7 @@ def _extract_contract_query_text(prd: dict, prd_features: list = None) -> str:
 
 def sar_agent_rag(state: SpecMindState) -> dict:
     """SAR Agent RAG 增强版 - 检索标准功能库对齐需求。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[SAR Agent-RAG] 节点启动 - 需求清洗 + 标准功能对齐")
 
@@ -136,13 +147,14 @@ def sar_agent_rag(state: SpecMindState) -> dict:
     return {
         "cleaned_requirements": cleaned_requirements,
         "overcommit_risks": overcommit_risks,
-        "audit_snapshots": [_make_snapshot("sar_agent_rag")],
+        "audit_snapshots": [_make_snapshot("sar_agent_rag", start_time)],
         "current_node": "sar_agent",
     }
 
 
 def legal_agent_rag(state: SpecMindState) -> dict:
     """Legal Agent RAG 增强版 - 检索法规库 + 置信度降级 + 引用溯源。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Legal Agent-RAG] 节点启动 - 合规预检（RAG 增强）")
     logger.info("[Legal Agent-RAG] ⚠ 本节点为辅助预检工具，输出不构成正式法律意见")
@@ -233,13 +245,14 @@ def legal_agent_rag(state: SpecMindState) -> dict:
         "legal_risk_level": risk_level.value,
         "legal_issues": legal_issues,
         "legal_blocked": legal_blocked,
-        "audit_snapshots": [_make_snapshot("legal_agent_rag")],
+        "audit_snapshots": [_make_snapshot("legal_agent_rag", start_time)],
         "current_node": "legal_agent",
     }
 
 
 def contract_agent_rag(state: SpecMindState) -> dict:
     """Contract Agent RAG 增强版 - 检索合同模板 + 条款比对。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Contract Agent-RAG] 节点启动 - 合同条款比对（RAG 增强）")
 
@@ -314,5 +327,5 @@ def contract_agent_rag(state: SpecMindState) -> dict:
 
     return {
         "contract_conflicts": contract_conflicts,
-        "audit_snapshots": [_make_snapshot("contract_agent_rag")],
+        "audit_snapshots": [_make_snapshot("contract_agent_rag", start_time)],
     }

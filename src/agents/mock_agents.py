@@ -17,9 +17,19 @@ from core.logger import setup_logger
 logger = setup_logger("specmind.agents")
 
 
-def _make_snapshot(node_name: str) -> dict:
-    """创建单条审计快照。"""
-    return {"node": node_name, "timestamp": time.time()}
+def _make_snapshot(node_name: str, start_time: float = None) -> dict:
+    """创建单条审计快照。
+
+    Args:
+        node_name: 节点名称
+        start_time: 节点开始执行的时间戳（time.time()），传入则计算 elapsed_ms。
+                    不传则 elapsed_ms 为 None（向后兼容）。
+    """
+    now = time.time()
+    snapshot = {"node": node_name, "timestamp": now}
+    if start_time is not None:
+        snapshot["elapsed_ms"] = int((now - start_time) * 1000)
+    return snapshot
 
 
 # ============================================================
@@ -27,6 +37,7 @@ def _make_snapshot(node_name: str) -> dict:
 # ============================================================
 def sar_agent(state: SpecMindState) -> dict:
     """SAR Agent：清洗脏需求，对齐企业标准能力，标注过度承诺。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[SAR Agent] 节点启动 - 需求清洗")
     logger.info("[SAR Agent] 输入: raw_input 长度=%d 字符", len(state.get("raw_input", "")))
@@ -65,7 +76,7 @@ def sar_agent(state: SpecMindState) -> dict:
     return {
         "cleaned_requirements": cleaned_requirements,
         "overcommit_risks": overcommit_risks,
-        "audit_snapshots": [_make_snapshot("sar_agent")],
+        "audit_snapshots": [_make_snapshot("sar_agent", start_time)],
         "current_node": "sar_agent",
     }
 
@@ -75,6 +86,7 @@ def sar_agent(state: SpecMindState) -> dict:
 # ============================================================
 def legal_agent(state: SpecMindState) -> dict:
     """Legal Agent：本地法规库合规预检，输出风险等级（中风险不阻断）。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Legal Agent] 节点启动 - 合规预检")
     logger.info("[Legal Agent] ⚠ 本节点为辅助预检工具，输出不构成正式法律意见")
@@ -121,7 +133,7 @@ def legal_agent(state: SpecMindState) -> dict:
         "legal_risk_level": risk_level.value,
         "legal_issues": legal_issues,
         "legal_blocked": legal_blocked,
-        "audit_snapshots": [_make_snapshot("legal_agent")],
+        "audit_snapshots": [_make_snapshot("legal_agent", start_time)],
         "current_node": "legal_agent",
     }
 
@@ -131,6 +143,7 @@ def legal_agent(state: SpecMindState) -> dict:
 # ============================================================
 def legal_agent_high_risk(state: SpecMindState) -> dict:
     """Legal Agent：高风险场景（测试 Interrupt 阻断逻辑）。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Legal Agent] 节点启动 - 合规预检（高风险场景）")
     logger.info("[Legal Agent] ⚠ 本节点为辅助预检工具，输出不构成正式法律意见")
@@ -178,7 +191,7 @@ def legal_agent_high_risk(state: SpecMindState) -> dict:
         "legal_risk_level": risk_level.value,
         "legal_issues": legal_issues,
         "legal_blocked": legal_blocked,
-        "audit_snapshots": [_make_snapshot("legal_agent")],
+        "audit_snapshots": [_make_snapshot("legal_agent", start_time)],
         "current_node": "legal_agent",
     }
 
@@ -188,6 +201,7 @@ def legal_agent_high_risk(state: SpecMindState) -> dict:
 # ============================================================
 def pm_agent(state: SpecMindState) -> dict:
     """PM Agent：调用 LLM 生成 PRD 和功能点标注。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[PM Agent] 节点启动 - PRD 生成")
     logger.info("[PM Agent] 输入: cleaned_requirements 长度=%d 字符",
@@ -257,7 +271,7 @@ def pm_agent(state: SpecMindState) -> dict:
     return {
         "prd": prd,
         "prd_features": prd_features,
-        "audit_snapshots": [_make_snapshot("pm_agent")],
+        "audit_snapshots": [_make_snapshot("pm_agent", start_time)],
         "current_node": "pm_agent",
     }
 
@@ -331,6 +345,7 @@ def commercial_agent(state: SpecMindState) -> dict:
     """
     from core.config import get_config
 
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Commercial Agent] 节点启动 - 动态双报价生成")
 
@@ -400,7 +415,7 @@ def commercial_agent(state: SpecMindState) -> dict:
 
     return {
         "quotes": quotes,
-        "audit_snapshots": [_make_snapshot("commercial_agent")],
+        "audit_snapshots": [_make_snapshot("commercial_agent", start_time)],
     }
 
 
@@ -409,6 +424,7 @@ def commercial_agent(state: SpecMindState) -> dict:
 # ============================================================
 def contract_agent(state: SpecMindState) -> dict:
     """Contract Agent：对比 PRD 与合同草案，标注条款冲突。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Contract Agent] 节点启动 - 合同条款比对")
     logger.info("[Contract Agent] 输入: prd 模块数=%d", len(state.get("prd", {})))
@@ -454,7 +470,7 @@ def contract_agent(state: SpecMindState) -> dict:
 
     return {
         "contract_conflicts": contract_conflicts,
-        "audit_snapshots": [_make_snapshot("contract_agent")],
+        "audit_snapshots": [_make_snapshot("contract_agent", start_time)],
     }
 
 
@@ -463,6 +479,7 @@ def contract_agent(state: SpecMindState) -> dict:
 # ============================================================
 def review_agent(state: SpecMindState) -> dict:
     """Review Agent：调用 LLM 进行 Tech/Design/QA 三维评审。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Review Agent] 节点启动 - 多维评审 (Tech/Design/QA)")
     prd = state.get("prd", {})
@@ -515,7 +532,7 @@ def review_agent(state: SpecMindState) -> dict:
     return {
         "review_comments": review_comments,
         "review_pass": review_pass,
-        "audit_snapshots": [_make_snapshot("review_agent")],
+        "audit_snapshots": [_make_snapshot("review_agent", start_time)],
     }
 
 
@@ -524,6 +541,7 @@ def review_agent(state: SpecMindState) -> dict:
 # ============================================================
 def planner_agent(state: SpecMindState) -> dict:
     """Planner Agent：调用 LLM 生成交付计划。"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("[Planner Agent] 节点启动 - 交付计划生成")
     prd = state.get("prd", {})
@@ -579,6 +597,6 @@ def planner_agent(state: SpecMindState) -> dict:
 
     return {
         "delivery_plan": delivery_plan,
-        "audit_snapshots": [_make_snapshot("planner_agent")],
+        "audit_snapshots": [_make_snapshot("planner_agent", start_time)],
         "current_node": "planner_agent",
     }
