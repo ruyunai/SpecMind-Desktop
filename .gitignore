@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data (generated at runtime)
+data/
+logs/
+
+# Secrets & config
+*.keyseed
+secrets.enc
+.env
+
+# PyInstaller
+*.spec.bak
+warn-*.txt
+xref-*.html
+
+# Test artifacts
+.pytest_cache/
+*.coverage
+htmlcov/
+
+# Trae
+.trae/

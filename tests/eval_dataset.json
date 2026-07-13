@@ -1,0 +1,268 @@
+{
+  "description": "SpecMind RAG 评估数据集 - 验证检索召回与 Legal 判定一致性",
+  "version": "1.0",
+  "metrics": {
+    "recall_at_5": "Top-5 结果中是否包含标注的期望法条/条款",
+    "legal_consistency": "Legal Agent 输出风险等级是否与标注一致",
+    "faithfulness": "输出是否仅基于检索结果（无幻觉法条）"
+  },
+  "test_cases": [
+    {
+      "id": "TC001",
+      "category": "legal",
+      "scenario": "未成年人信息采集",
+      "query": "K12 在线教育平台收集学生个人信息",
+      "expected_results": [
+        "未成年人保护法",
+        "个人信息保护法"
+      ],
+      "expected_risk_level": "medium",
+      "expected_blocked": false,
+      "tags": ["normal", "minor", "personal_info"]
+    },
+    {
+      "id": "TC002",
+      "category": "legal",
+      "scenario": "境外数据出境高风险",
+      "query": "境外教育机构访问中国境内学生数据，数据存储在新加坡",
+      "expected_results": [
+        "数据安全法",
+        "个人信息保护法"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": true,
+      "tags": ["high_risk", "cross_border", "minor"]
+    },
+    {
+      "id": "TC003",
+      "category": "legal",
+      "scenario": "广告法绝对化用语",
+      "query": "销售承诺终身免费升级",
+      "expected_results": [
+        "广告法"
+      ],
+      "expected_risk_level": "medium",
+      "expected_blocked": false,
+      "tags": ["normal", "advertising_law"]
+    },
+    {
+      "id": "TC004",
+      "category": "legal",
+      "scenario": "人脸识别生物特征",
+      "query": "直播教学使用人脸识别考勤",
+      "expected_results": [
+        "个人信息保护法"
+      ],
+      "expected_risk_level": "medium",
+      "expected_blocked": false,
+      "tags": ["normal", "biometric"]
+    },
+    {
+      "id": "TC005",
+      "category": "legal",
+      "scenario": "10万并发性能承诺",
+      "query": "销售承诺支持10万并发",
+      "expected_results": [],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["normal", "overcommit", "no_legal_issue"]
+    },
+    {
+      "id": "TC006",
+      "category": "legal",
+      "scenario": "源代码交付承诺",
+      "query": "销售承诺提供源代码",
+      "expected_results": [],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["normal", "overcommit", "no_legal_issue"]
+    },
+    {
+      "id": "TC007",
+      "category": "legal",
+      "scenario": "未成年人监护人同意缺失",
+      "query": "未满14周岁学生注册未取得监护人同意",
+      "expected_results": [
+        "未成年人保护法",
+        "个人信息保护法"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": true,
+      "tags": ["high_risk", "minor", "guardian_consent"]
+    },
+    {
+      "id": "TC008",
+      "category": "legal",
+      "scenario": "数据出境安全评估缺失",
+      "query": "未成年人数据出境未经安全评估",
+      "expected_results": [
+        "数据安全法"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": true,
+      "tags": ["high_risk", "cross_border", "security_assessment"]
+    },
+    {
+      "id": "TC009",
+      "category": "contract",
+      "scenario": "维护期条款冲突",
+      "query": "PRD首年免费维护 vs 合同终身免费维护",
+      "expected_results": [
+        "维护期",
+        "免费维护"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": false,
+      "tags": ["contract_conflict", "maintenance"]
+    },
+    {
+      "id": "TC010",
+      "category": "contract",
+      "scenario": "并发能力条款冲突",
+      "query": "PRD标准版1万并发 vs 合同10万并发",
+      "expected_results": [
+        "并发"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": false,
+      "tags": ["contract_conflict", "concurrency"]
+    },
+    {
+      "id": "TC011",
+      "category": "contract",
+      "scenario": "源代码交付条款冲突",
+      "query": "PRD不提供源代码 vs 合同交付源代码",
+      "expected_results": [
+        "源代码",
+        "知识产权"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": false,
+      "tags": ["contract_conflict", "source_code"]
+    },
+    {
+      "id": "TC012",
+      "category": "sar",
+      "scenario": "排课功能对齐",
+      "query": "用户需要排课功能",
+      "expected_results": [
+        "课程管理",
+        "排课系统"
+      ],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["feature_alignment", "scheduling"]
+    },
+    {
+      "id": "TC013",
+      "category": "sar",
+      "scenario": "直播功能对齐",
+      "query": "用户需要在线直播教学",
+      "expected_results": [
+        "在线直播",
+        "直播"
+      ],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["feature_alignment", "live_streaming"]
+    },
+    {
+      "id": "TC014",
+      "category": "sar",
+      "scenario": "AI推荐功能暂不支持",
+      "query": "用户需要AI智能推荐",
+      "expected_results": [
+        "暂不支持"
+      ],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["feature_alignment", "unsupported"]
+    },
+    {
+      "id": "TC015",
+      "category": "legal",
+      "scenario": "正常需求无合规风险",
+      "query": "课程管理系统，学生提交作业，教师批改",
+      "expected_results": [],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["normal", "no_risk"]
+    },
+    {
+      "id": "TC016",
+      "category": "legal",
+      "scenario": "支付系统合规",
+      "query": "课程购买在线支付",
+      "expected_results": [],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["normal", "payment"]
+    },
+    {
+      "id": "TC017",
+      "category": "legal",
+      "scenario": "数据看板隐私",
+      "query": "机构管理数据看板展示学生数据",
+      "expected_results": [
+        "个人信息保护法"
+      ],
+      "expected_risk_level": "medium",
+      "expected_blocked": false,
+      "tags": ["normal", "data_privacy"]
+    },
+    {
+      "id": "TC018",
+      "category": "contract",
+      "scenario": "定制功能条款",
+      "query": "10万并发需定制开发",
+      "expected_results": [
+        "定制",
+        "并发"
+      ],
+      "expected_risk_level": "medium",
+      "expected_blocked": false,
+      "tags": ["contract_conflict", "customization"]
+    },
+    {
+      "id": "TC019",
+      "category": "sar",
+      "scenario": "支付功能对齐",
+      "query": "用户需要课程购买和订单管理",
+      "expected_results": [
+        "支付系统",
+        "课程购买"
+      ],
+      "expected_risk_level": "low",
+      "expected_blocked": false,
+      "tags": ["feature_alignment", "payment"]
+    },
+    {
+      "id": "TC020",
+      "category": "legal",
+      "scenario": "多法条复合违规",
+      "query": "境外教育机构收集未成年人数据并人脸识别，数据出境到新加坡",
+      "expected_results": [
+        "数据安全法",
+        "个人信息保护法",
+        "未成年人保护法"
+      ],
+      "expected_risk_level": "high",
+      "expected_blocked": true,
+      "tags": ["high_risk", "multi_violation", "cross_border", "minor", "biometric"]
+    }
+  ],
+  "summary": {
+    "total_cases": 20,
+    "legal_cases": 12,
+    "contract_cases": 4,
+    "sar_cases": 4,
+    "high_risk_cases": 5,
+    "normal_cases": 15,
+    "expected_blocked_cases": 4,
+    "target_metrics": {
+      "recall_at_5": ">= 0.85",
+      "legal_consistency": ">= 0.85",
+      "faithfulness": ">= 0.90"
+    }
+  }
+}
