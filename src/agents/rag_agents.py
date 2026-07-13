@@ -35,7 +35,7 @@ def _make_snapshot(node_name: str) -> dict:
     return {"node": node_name, "timestamp": time.time()}
 
 
-def _extract_contract_query_text(prd: dict) -> str:
+def _extract_contract_query_text(prd: dict, prd_features: list = None) -> str:
     """从 PRD 字典中提取合同比对所需的关键文本。
 
     避免直接使用 str(prd)，因为 Python dict 字符串会包含单引号、花括号、
@@ -43,6 +43,7 @@ def _extract_contract_query_text(prd: dict) -> str:
 
     Args:
         prd: PM 生成的 PRD 字典（8 模块）
+        prd_features: 功能点列表（从 state 顶层传入，因 prd 字典内不含此字段）
 
     Returns:
         拼接后的纯文本查询串
@@ -57,8 +58,8 @@ def _extract_contract_query_text(prd: dict) -> str:
         if value and isinstance(value, str):
             parts.append(value)
 
-    # 功能点列表（如有）
-    features = prd.get("功能点标注", prd.get("prd_features", []))
+    # 功能点列表（从 state 顶层 prd_features 传入，prd 字典内不含此字段）
+    features = prd_features or []
     if isinstance(features, list):
         for f in features[:5]:
             if isinstance(f, dict):
@@ -243,8 +244,9 @@ def contract_agent_rag(state: SpecMindState) -> dict:
     logger.info("[Contract Agent-RAG] 节点启动 - 合同条款比对（RAG 增强）")
 
     prd = state.get("prd", {})
+    prd_features = state.get("prd_features", [])
     # 提取 PRD 关键字段，避免 str(prd) 引入 Python dict 语法字符污染 FTS5 查询
-    prd_text = _extract_contract_query_text(prd)
+    prd_text = _extract_contract_query_text(prd, prd_features)
     logger.info("[Contract Agent-RAG] 输入: prd 模块数=%d, 提取文本长度=%d", len(prd), len(prd_text))
 
     # 1. Query 改写

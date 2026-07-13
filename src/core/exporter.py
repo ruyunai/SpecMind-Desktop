@@ -20,6 +20,54 @@ def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+def _extract_weeks(phase: Dict[str, Any]) -> int:
+    """从交付阶段提取周数，兼容 duration/weeks key 与 int/str 类型。
+
+    Args:
+        phase: 交付阶段字典，可能含 duration 或 weeks 字段
+
+    Returns:
+        周数（int），解析失败返回 0
+    """
+    for key in ("duration", "weeks"):
+        val = phase.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            # 提取首个数字（兼容 "3周"/"约4周"/"1.5周"）
+            import re
+            match = re.search(r"[\d.]+", val)
+            if match:
+                try:
+                    return int(float(match.group()))
+                except ValueError:
+                    return 0
+            return 0
+    return 0
+
+
+def _format_duration(phase: Dict[str, Any]) -> str:
+    """格式化阶段工期为展示字符串，兼容 duration/weeks key 与 int/str 类型。
+
+    Args:
+        phase: 交付阶段字典
+
+    Returns:
+        工期展示字符串（如 "3周" / "0周"）
+    """
+    for key in ("duration", "weeks"):
+        val = phase.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (int, float)):
+            return f"{int(val)}周"
+        if isinstance(val, str) and val.strip():
+            return val
+    return "0周"
+
+
 def export_prd_as_markdown(state: Dict[str, Any], client_name: str = "") -> str:
     """将 PRD 及配套结果导出为 Markdown 字符串。
 
@@ -109,10 +157,10 @@ def export_prd_as_markdown(state: Dict[str, Any], client_name: str = "") -> str:
         lines.append("## 七、Planner 交付计划\n")
         total_weeks = 0
         for phase in plan:
-            weeks = int(phase.get("duration", "0周").replace("周", ""))
-            total_weeks += weeks
-            lines.append(f"### {phase.get('phase', '')}（{phase.get('duration', '')}）")
-            lines.append(f"- 交付物：{phase.get('deliverable', '')}\n")
+            total_weeks += _extract_weeks(phase)
+            duration_str = _format_duration(phase)
+            lines.append(f"### {phase.get('phase', '')}（{duration_str}）")
+            lines.append(f"- 交付物：{phase.get('deliverable', phase.get('deliverables', ''))}\n")
         lines.append(f"**总工期：{total_weeks} 周**\n")
 
     # 8. Legal 预检声明
@@ -217,10 +265,10 @@ def export_prd_as_word(state: Dict[str, Any], output_path: Path, client_name: st
         doc.add_heading("七、Planner 交付计划", level=1)
         total_weeks = 0
         for phase in plan:
-            weeks = int(phase.get("duration", "0周").replace("周", ""))
-            total_weeks += weeks
-            doc.add_heading(f"{phase.get('phase', '')}（{phase.get('duration', '')}）", level=2)
-            doc.add_paragraph(f"交付物：{phase.get('deliverable', '')}")
+            total_weeks += _extract_weeks(phase)
+            duration_str = _format_duration(phase)
+            doc.add_heading(f"{phase.get('phase', '')}（{duration_str}）", level=2)
+            doc.add_paragraph(f"交付物：{phase.get('deliverable', phase.get('deliverables', ''))}")
         doc.add_paragraph(f"总工期：{total_weeks} 周")
 
     # Legal 声明

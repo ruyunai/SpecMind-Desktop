@@ -281,6 +281,40 @@ def _parse_llm_features(llm_text: str) -> list:
              "desc": llm_text[:200]}]
 
 
+def _parse_llm_delivery_plan(llm_text: str) -> list:
+    """从 LLM 返回文本中提取交付计划列表。
+
+    期望 LLM 输出 JSON 数组，每项含 phase/weeks(or duration)/deliverables(or deliverable)。
+    回退时构造单阶段占位结构，避免下游 key 不存在崩溃。
+    """
+    import json
+    try:
+        start = llm_text.find("[")
+        end = llm_text.rfind("]") + 1
+        if start >= 0 and end > start:
+            data = json.loads(llm_text[start:end])
+            if isinstance(data, list) and data:
+                # 规范化 key：deliverables → deliverable，保证下游一致
+                normalized = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    phase_name = item.get("phase", item.get("name", "未命名阶段"))
+                    duration = item.get("weeks", item.get("duration", "0周"))
+                    deliverable = item.get("deliverables", item.get("deliverable", "未指定"))
+                    normalized.append({
+                        "phase": phase_name,
+                        "duration": duration,
+                        "deliverable": deliverable,
+                    })
+                return normalized if normalized else []
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 回退：将 LLM 文本作为单阶段描述（避免下游访问 None）
+    return [{"phase": "LLM 输出", "duration": "0周",
+             "deliverable": llm_text[:200]}]
+
+
 # ============================================================
 # Commercial Agent - 动态双报价（基于功能点 × 成本参数）
 # ============================================================
@@ -507,8 +541,7 @@ def planner_agent(state: SpecMindState) -> dict:
         logger.error("[Planner Agent] LLM 调用失败，回退到 mock: %s", e)
 
     if llm_reply:
-        import json
-        delivery_plan = _parse_llm_features(llm_reply)
+        delivery_plan = _parse_llm_delivery_plan(llm_reply)
     else:
         delivery_plan = [
             {"phase": "需求确认", "duration": "1周", "deliverable": "PRD 终稿 + 评审记录"},
@@ -527,7 +560,7 @@ def planner_agent(state: SpecMindState) -> dict:
             if isinstance(val, (int, float)):
                 return int(val)
             if isinstance(val, str):
-                return int(val.replace("周", "").replace("周", "").strip() or "0")
+                return int(val.replace("周", "").strip() or "0")
         return 0
     total_weeks = sum(_parse_weeks(p) for p in delivery_plan)
 
