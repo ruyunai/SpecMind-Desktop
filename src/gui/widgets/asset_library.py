@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QPushButton,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
 
 
 # 资产分类定义（顺序 = 展示顺序）
@@ -77,16 +79,18 @@ class AssetLibraryPanel(QWidget):
         search_bar.addWidget(self.upload_btn)
         layout.addLayout(search_bar)
 
-        hint = QLabel("双击分类展开真实数据，双击资产查看详情")
+        hint = QLabel("双击资产查看详情 | 右键资产可删除")
         hint.setStyleSheet("color: #6c7086; font-size: 11px;")
         layout.addWidget(hint)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.itemExpanded.connect(self._on_item_expanded)
         self.tree.itemClicked.connect(self._on_item_clicked)
         self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.tree.customContextMenuRequested.connect(self._on_context_menu)
 
         # 占位：3 个资产分类（展开时懒加载真实数据）
         for cat_name, cat_key, desc in CATEGORY_GROUPS:
@@ -151,12 +155,20 @@ class AssetLibraryPanel(QWidget):
             empty_item.setForeground(0, self._gray_brush())
             item.addChild(empty_item)
         else:
+            from storage.schema import is_expired
             for asset in assets:
                 source = asset.get("source", "未知")
                 version = asset.get("version", "")
-                # 取文本前 30 字符作为预览
+                metadata = asset.get("metadata", {})
                 preview = asset.get("text", "")[:30].replace("\n", " ")
-                label = f"[{source}] {preview}..."
+
+                # 过期检查
+                is_exp = is_expired(metadata)
+
+                if is_exp:
+                    label = f"⚠[过期] [{source}] {preview}..."
+                else:
+                    label = f"[{source}] {preview}..."
                 child = QTreeWidgetItem([label])
                 child.setData(0, Qt.UserRole, "asset")
                 child.setData(1, Qt.UserRole, {
@@ -164,8 +176,12 @@ class AssetLibraryPanel(QWidget):
                     "source": source,
                     "version": version,
                     "text": asset.get("text", ""),
+                    "expired": is_exp,
+                    "effective_date": metadata.get("effective_date", ""),
                 })
                 child.setToolTip(0, asset.get("text", "")[:200])
+                if is_exp:
+                    child.setForeground(0, QBrush(QColor("#f38ba8")))  # 红色标记
                 item.addChild(child)
 
         self._loaded_categories.add(cat_key)
@@ -195,6 +211,66 @@ class AssetLibraryPanel(QWidget):
         from gui.dialogs.asset_detail_dialog import AssetDetailDialog
         dialog = AssetDetailDialog(data, parent=self)
         dialog.exec()
+
+    def _on_context_menu(self, pos) -> None:
+        """右键菜单：删除文档。"""
+        item = self.tree.itemAt(pos)
+        if not item or item.data(0, Qt.UserRole) != "asset":
+            return
+
+        data = item.data(1, Qt.UserRole) or {}
+        source = data.get("source", "未知")
+        category = data.get("category", "")
+
+        menu = QMenu(self)
+        delete_action = menu.addAction(f"删除「{source}」")
+        action = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            self._on_delete_asset(item, source, category)
+
+    def _on_delete_asset(
+        self, item: QTreeWidgetItem, source: str, category: str
+    ) -> None:
+        """删除资产项（含确认弹窗）。"""
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要从知识库中删除「{source}」吗？\n\n"
+            "删除后该文档的所有分块将被移除，Agent 将无法检索到这些内容。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            from gui.services.upload_service import delete_documents_by_source
+            deleted = delete_documents_by_source(source, category)
+            if deleted > 0:
+                QMessageBox.information(
+                    self, "删除成功",
+                    f"已删除「{source}」({deleted} 个分块)"
+                )
+            else:
+                QMessageBox.information(
+                    self, "未删除", f"未找到「{source}」的相关数据"
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "删除失败", f"删除出错: {e}")
+            return
+
+        # 刷新当前分类
+        parent = item.parent()
+        if parent:
+            cat_key = parent.data(1, Qt.UserRole)
+            self._loaded_categories.discard(cat_key)
+            # 清空并重新加载该分类
+            while parent.childCount() > 0:
+                parent.removeChild(parent.child(0))
+            placeholder = QTreeWidgetItem(["（点击展开加载真实数据...）"])
+            parent.addChild(placeholder)
+            parent.setExpanded(False)
+        self._update_stats()
 
     def _on_search_text_changed(self, text: str) -> None:
         """根据搜索词过滤已加载的资产项。"""
@@ -226,30 +302,31 @@ class AssetLibraryPanel(QWidget):
                 cat_item.setHidden(cat_key != selected_key)
 
     def _update_stats(self) -> None:
-        """更新底部统计。"""
-        total = sum(
-            self.tree.topLevelItem(i).childCount()
-            for i in range(self.tree.topLevelItemCount())
-            if self.tree.topLevelItem(i).data(1, Qt.UserRole) in self._loaded_categories
-        )
+        """更新底部统计（含分类明细）。"""
+        parts = []
+        total = 0
         loaded = len(self._loaded_categories)
-        # 统计可见资产数（考虑搜索过滤）
-        visible = 0
         for i in range(self.tree.topLevelItemCount()):
             cat_item = self.tree.topLevelItem(i)
-            if cat_item.isHidden():
-                continue
-            for j in range(cat_item.childCount()):
-                if not cat_item.child(j).isHidden():
-                    visible += 1
-        self.stats_label.setText(
-            f"已加载 {loaded}/{len(CATEGORY_GROUPS)} 分类, 共 {total} 条资产, 当前显示 {visible} 条"
-        )
+            cat_key = cat_item.data(1, Qt.UserRole)
+            count = 0
+            if cat_key in self._loaded_categories:
+                for j in range(cat_item.childCount()):
+                    child = cat_item.child(j)
+                    if child.data(0, Qt.UserRole) == "asset":
+                        count += 1
+            cat_name = cat_item.text(0).split("\n")[0] if "\n" in cat_item.text(0) else cat_item.text(0)
+            if cat_key in self._loaded_categories:
+                parts.append(f"{cat_name}: {count} 条")
+            else:
+                parts.append(f"{cat_name}: 未加载")
+            total += count
+        parts.insert(0, f"共 {total} 条")
+        self.stats_label.setText("  |  ".join(parts))
 
     @staticmethod
     def _gray_brush():
         """灰色画笔（占位提示样式）。"""
-        from PySide6.QtGui import QBrush, QColor
         return QBrush(QColor("#6c7086"))
 
     def refresh(self) -> None:
