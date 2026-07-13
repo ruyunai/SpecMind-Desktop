@@ -97,6 +97,37 @@ class MainWindow(QMainWindow):
         status = self.statusBar()
         status.showMessage("就绪 - 在中栏输入需求后点击「开始执行」（Ctrl+, 打开模型配置）")
 
+        # 延迟检测知识库是否为空（避免阻塞 UI 初始化）
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, self._check_empty_kb)
+
+    def _check_empty_kb(self) -> None:
+        """检测知识库是否为空，若为空则提示用户上传文档。"""
+        try:
+            from storage.chroma_store import ChromaStore
+            from storage.schema import AssetCategory
+            store = ChromaStore()
+            empty_categories = []
+            for cat in (AssetCategory.STANDARD_FEATURE, AssetCategory.REGULATION, AssetCategory.CONTRACT_TEMPLATE):
+                if store.count(cat) == 0:
+                    cat_names = {
+                        AssetCategory.STANDARD_FEATURE: "标准功能清单",
+                        AssetCategory.REGULATION: "法规库",
+                        AssetCategory.CONTRACT_TEMPLATE: "合同模板库",
+                    }
+                    empty_categories.append(cat_names.get(cat, cat.value))
+
+            if len(empty_categories) == 3:
+                self.statusBar().showMessage(
+                    "⚠ 知识库为空！请在左栏「企业资产库」点击「上传」按钮，上传企业文档（支持 Word/PDF/TXT）以启用智能检索"
+                )
+            elif empty_categories:
+                self.statusBar().showMessage(
+                    f"⚠ 以下知识库为空: {', '.join(empty_categories)}。建议上传对应文档以提升 Agent 分析质量"
+                )
+        except Exception:
+            pass  # ChromaDB 未初始化时不强行报错
+
     def _connect_signals(self) -> None:
         """连接信号。"""
         self.workspace_panel.execute_requested.connect(self._start_workflow)

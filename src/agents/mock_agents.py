@@ -245,7 +245,8 @@ def pm_agent(state: SpecMindState) -> dict:
 
     tag_counts = {}
     for feat in prd_features:
-        tag_counts[feat["tag"]] = tag_counts.get(feat["tag"], 0) + 1
+        tag = feat.get("tag", FeatureTag.STANDARD.value)
+        tag_counts[tag] = tag_counts.get(tag, 0) + 1
     logger.info("[PM Agent] PRD 生成完成, 功能点=%d", len(prd_features))
     for tag, count in tag_counts.items():
         logger.info("[PM Agent]   %s: %d 个", tag, count)

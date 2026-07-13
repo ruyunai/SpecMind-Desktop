@@ -10,6 +10,7 @@
 DeepSeek API 完全兼容 OpenAI 格式（base_url="https://api.deepseek.com/v1"）。
 """
 import logging
+import time
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
@@ -18,6 +19,33 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from core.config import get_config, AGENT_KEYS
 
 logger = logging.getLogger("specmind.llm")
+
+# ---- 重试配置 ----
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0          # 首次重试等待 2s
+RETRY_BACKOFF_FACTOR = 2.0      # 每次翻倍：2s → 4s → 8s
+RETRYABLE_ERRORS = (
+    "timeout",
+    "connection",
+    "rate limit",
+    "server error",
+    "service unavailable",
+    "too many requests",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+)
+
+
+def _is_retryable(error: Exception) -> bool:
+    """判断异常是否可重试（网络/服务端错误可重试，认证/参数错误不重试）。"""
+    # 按异常类型判断（Python 内置异常可能无消息文本）
+    type_name = type(error).__name__.lower()
+    if any(kw in type_name for kw in ("timeout", "connection", "oserror")):
+        return True
+
+    msg = str(error).lower()
+    return any(keyword in msg for keyword in RETRYABLE_ERRORS)
 
 
 # ---- 缓存：按 agent_key 缓存 ChatOpenAI 实例 ----
@@ -45,7 +73,7 @@ def _create_llm(agent_key: str) -> ChatOpenAI:
         api_key=api_key,
         temperature=0.3,
         timeout=120,
-        max_retries=2,
+        max_retries=2,  # langchain 内置重试
     )
 
 
@@ -57,7 +85,10 @@ def get_llm(agent_key: str) -> ChatOpenAI:
 
 
 def invoke_llm(agent_key: str, prompt: str) -> str:
-    """同步调用 LLM，返回文本内容。
+    """同步调用 LLM，带重试机制。
+
+    最多重试 MAX_RETRIES 次（默认 3 次），指数退避 (2s → 4s → 8s)。
+    仅对网络/超时/服务端错误重试，认证错误直接抛出。
 
     Args:
         agent_key: Agent 标识（sar/legal/pm/commercial/contract/review/planner）
@@ -80,11 +111,46 @@ def invoke_llm(agent_key: str, prompt: str) -> str:
     else:
         messages = [HumanMessage(content=prompt)]
 
-    logger.info("[LLM] %s → 调用中 (model=%s)...", agent_key, llm.model_name)
-    response = llm.invoke(messages)
-    content = response.content.strip() if hasattr(response, "content") else str(response)
-    logger.info("[LLM] %s ← 返回 %d 字符", agent_key, len(content))
-    return content
+    last_error = None
+    for attempt in range(1 + MAX_RETRIES):
+        try:
+            logger.info(
+                "[LLM] %s → 调用中 (model=%s, attempt=%d/%d)...",
+                agent_key, llm.model_name, attempt, 1 + MAX_RETRIES,
+            )
+            response = llm.invoke(messages)
+            content = (
+                response.content.strip()
+                if hasattr(response, "content")
+                else str(response)
+            )
+            logger.info("[LLM] %s ← 返回 %d 字符", agent_key, len(content))
+            if attempt > 0:
+                logger.info("[LLM] %s 重试成功 (第 %d 次)", agent_key, attempt)
+            return content
+
+        except Exception as e:
+            last_error = e
+            if attempt >= MAX_RETRIES:
+                logger.error(
+                    "[LLM] %s 重试 %d 次后仍失败: %s",
+                    agent_key, MAX_RETRIES, e,
+                )
+                raise
+
+            if not _is_retryable(e):
+                logger.error("[LLM] %s 不可重试错误，直接抛出: %s", agent_key, e)
+                raise
+
+            delay = RETRY_BASE_DELAY * (RETRY_BACKOFF_FACTOR ** attempt)
+            logger.warning(
+                "[LLM] %s 调用失败 (attempt=%d): %s → %ss 后重试...",
+                agent_key, attempt, str(e)[:100], delay,
+            )
+            time.sleep(delay)
+
+    # 不应到达此处
+    raise last_error  # type: ignore[misc]
 
 
 def clear_llm_cache() -> None:
