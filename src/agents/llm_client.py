@@ -100,10 +100,12 @@ def invoke_llm(agent_key: str, prompt: str) -> str:
     llm = get_llm(agent_key)
 
     # 尝试从 prompt 中分离 System/User 消息
-    if prompt.startswith("System:"):
-        parts = prompt.split("\n\nUser:", 1) if "\n\nUser:" in prompt else (prompt, "")
-        system = parts[0].replace("System:", "").strip() if len(parts) > 1 else ""
-        user = parts[1].strip() if len(parts) > 1 else prompt
+    # 仅当 prompt 同时含 "System:" 前缀和 "\n\nUser:" 分隔符时才拆分，
+    # 否则全部作为 HumanMessage 发送（避免 HumanMessage 为空导致 LLM 无输入）
+    if prompt.startswith("System:") and "\n\nUser:" in prompt:
+        system_part, user_part = prompt.split("\n\nUser:", 1)
+        system = system_part.replace("System:", "").strip()
+        user = user_part.strip()
         messages = [
             SystemMessage(content=system),
             HumanMessage(content=user),
