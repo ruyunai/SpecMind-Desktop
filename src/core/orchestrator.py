@@ -15,11 +15,14 @@ Interrupt 机制：
 5. 用户拒绝 → Orchestrator 发 workflow_complete，工作流终止
 """
 import threading
+import time
+import uuid
 from PySide6.QtCore import QThread, Signal
 
 from agents.state import SpecMindState
 from graph.builder import get_compiled_graph, get_resume_graph
 from core.logger import setup_logger
+from storage.sqlite_store import get_store
 
 logger = setup_logger("specmind.orchestrator")
 
@@ -57,6 +60,8 @@ class WorkflowOrchestrator(QThread):
         self._confirm_event = threading.Event()
         self._reject_flag = False
         self._completed_nodes: set[str] = set()
+        self._run_id: str = ""              # 本次运行唯一 ID
+        self._node_start_times: dict[str, float] = {}  # 节点开始时间
 
     def _emit_log(self, msg: str) -> None:
         """发送日志信号。"""
@@ -88,9 +93,18 @@ class WorkflowOrchestrator(QThread):
 
     def run(self) -> None:
         """执行工作流（后台线程入口）。"""
+        self._run_id = str(uuid.uuid4())
+        self._node_start_times.clear()
+        store = get_store()
+        store.add_audit_log(
+            self._run_id, "workflow", "start",
+            {"raw_length": len(self.raw_input), "client_name": self.client_name},
+        )
+
         self._emit_log("=" * 60)
         self._emit_log("[Orchestrator] LangGraph 工作流启动")
         self._emit_log(f"[Orchestrator] 输入长度: {len(self.raw_input)} 字符")
+        self._emit_log(f"[Orchestrator] run_id: {self._run_id[:8]}...")
 
         # 初始 State
         initial_state: SpecMindState = {
@@ -107,6 +121,10 @@ class WorkflowOrchestrator(QThread):
 
             # 检查是否被阻断
             if self._state.get("legal_blocked", False):
+                store.add_audit_log(
+                    self._run_id, "workflow", "blocked",
+                    {"legal_risk_level": self._state.get("legal_risk_level", "high")},
+                )
                 # === 等待人工确认 ===
                 self._emit_log("[Orchestrator] ⛔ Legal 高风险，等待人工确认...")
                 reason = f"Legal 合规预检判定 {self._state.get('legal_risk_level', 'high')} 风险"
@@ -118,20 +136,30 @@ class WorkflowOrchestrator(QThread):
 
                 if self._reject_flag:
                     # 用户拒绝
+                    store.add_audit_log(self._run_id, "workflow", "rejected", {})
                     self._emit_log("[Orchestrator] ✗ 用户拒绝放行，工作流终止")
                     self.workflow_complete.emit(dict(self._state))
                     return
 
                 # === 阶段 2：运行 resume 图 ===
+                store.add_audit_log(self._run_id, "workflow", "resumed", {})
                 self._emit_log("[Orchestrator] ▶ 阶段 2: 用户确认放行，运行 resume 图")
                 self._run_resume_graph()
 
             # 完成
+            store.add_audit_log(
+                self._run_id, "workflow", "complete",
+                {"total_nodes": len(self._completed_nodes)},
+            )
             self._emit_log("[Orchestrator] ✅ 工作流全部完成")
             self._emit_log(f"[Orchestrator] 审计快照数: {len(self._state.get('audit_snapshots', []))}")
             self.workflow_complete.emit(dict(self._state))
 
         except Exception as e:
+            store.add_audit_log(
+                self._run_id, "workflow", "error",
+                {"error": f"{type(e).__name__}: {e}"},
+            )
             self._emit_log(f"[Orchestrator] ❌ 异常: {type(e).__name__}: {e}")
             import traceback
             self._emit_log(traceback.format_exc())
@@ -144,18 +172,35 @@ class WorkflowOrchestrator(QThread):
 
         self._emit_log("[Orchestrator] 获取编译图，开始 stream 执行...")
 
+        store = get_store()
         # 注意：stream_mode="updates" 只在节点返回后才 yield 事件，
         # 因此 node_started 信号实际在节点执行完毕后发出（存在天然滞后）。
         # 此处先 emit started 再 merge state 再 emit finished，至少保证信号顺序正确，
         # GUI 上"执行中"状态会短暂显示。要彻底消除滞后需升级 LangGraph 或使用节点回调机制。
         for event in graph.stream(initial_state, config, stream_mode="updates"):
             for node_name, node_update in event.items():
+                # 审计：记录 entry（时间戳标记在实际 merge 前）
+                entry_ts = time.time()
+                self._node_start_times[node_name] = entry_ts
+                store.add_audit_log(
+                    self._run_id, node_name, "entry",
+                    {"current_node": self._state.get("current_node", "")},
+                )
+
                 self.node_started.emit(node_name)
                 self._emit_log(f"[Orchestrator] ▶ {node_name} 结果返回，合并 State...")
 
                 # 合并 State 更新（audit_snapshots 需累加，不能覆盖）
                 if node_update:
                     self._merge_state_update(node_update)
+
+                # 审计：记录 exit（带耗时）
+                elapsed = int((time.time() - entry_ts) * 1000)
+                store.add_audit_log(
+                    self._run_id, node_name, "exit",
+                    {"current_node": self._state.get("current_node", "")},
+                    elapsed_ms=elapsed,
+                )
 
                 self.node_finished.emit(node_name)
                 self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")
@@ -186,14 +231,29 @@ class WorkflowOrchestrator(QThread):
 
         self._emit_log("[Orchestrator] 获取 resume 图，开始 stream 执行...")
 
+        store = get_store()
         # resume 图同样使用 updates 模式，节点开始信号存在天然滞后
         for event in resume_graph.stream(resume_state, stream_mode="updates"):
             for node_name, node_update in event.items():
+                entry_ts = time.time()
+                self._node_start_times[node_name] = entry_ts
+                store.add_audit_log(
+                    self._run_id, node_name, "entry",
+                    {"current_node": self._state.get("current_node", "")},
+                )
+
                 self.node_started.emit(node_name)
                 self._emit_log(f"[Orchestrator] ▶ {node_name} 结果返回，合并 State...")
 
                 if node_update:
                     self._merge_state_update(node_update)
+
+                elapsed = int((time.time() - entry_ts) * 1000)
+                store.add_audit_log(
+                    self._run_id, node_name, "exit",
+                    {"current_node": self._state.get("current_node", "")},
+                    elapsed_ms=elapsed,
+                )
 
                 self.node_finished.emit(node_name)
                 self._emit_log(f"[Orchestrator] ✅ {node_name} 完成")

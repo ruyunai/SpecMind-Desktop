@@ -52,9 +52,11 @@ class SqliteStore:
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL DEFAULT '',
                 node_name TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 state_snapshot TEXT,
+                elapsed_ms INTEGER,
                 timestamp TEXT NOT NULL
             );
 
@@ -70,8 +72,27 @@ class SqliteStore:
         """)
         self._conn.commit()
 
+        # 审计日志表迁移：补 run_id / elapsed_ms 列
+        self._migrate_audit_logs()
+        # 审计日志索引
+        self._conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_audit_run_id ON audit_logs(run_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_node_name ON audit_logs(node_name);
+            CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
+        """)
+        self._conn.commit()
+
         # FTS5 虚拟表（trigram tokenizer）- 含旧表自动迁移
         self._migrate_fts_to_trigram()
+
+    def _migrate_audit_logs(self) -> None:
+        """审计日志表迁移：为旧表补 run_id 和 elapsed_ms 列。"""
+        cols = {row["name"] for row in
+                self._conn.execute("PRAGMA table_info(audit_logs)").fetchall()}
+        if "run_id" not in cols:
+            self._conn.execute("ALTER TABLE audit_logs ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
+        if "elapsed_ms" not in cols:
+            self._conn.execute("ALTER TABLE audit_logs ADD COLUMN elapsed_ms INTEGER")
 
     def _migrate_fts_to_trigram(self) -> None:
         """检测并迁移 FTS5 表到 trigram tokenizer。
@@ -398,22 +419,27 @@ class SqliteStore:
 
     def add_audit_log(
         self,
+        run_id: str,
         node_name: str,
         event_type: str,
         state_snapshot: Optional[dict] = None,
+        elapsed_ms: Optional[int] = None,
     ) -> None:
         """添加审计日志。
 
         Args:
+            run_id: 工作流运行 ID（每次执行唯一）
             node_name: 节点名
             event_type: 事件类型（entry/exit）
             state_snapshot: State 快照
+            elapsed_ms: 节点耗时（ms），仅 exit 时记录
         """
         snapshot_str = json.dumps(state_snapshot or {}, ensure_ascii=False)
         self._conn.execute(
-            "INSERT INTO audit_logs (node_name, event_type, state_snapshot, timestamp) "
-            "VALUES (?, ?, ?, ?)",
-            (node_name, event_type, snapshot_str, datetime.now().isoformat()),
+            "INSERT INTO audit_logs (run_id, node_name, event_type, "
+            "state_snapshot, elapsed_ms, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, node_name, event_type, snapshot_str, elapsed_ms,
+             datetime.now().isoformat()),
         )
         self._conn.commit()
 
@@ -430,6 +456,42 @@ class SqliteStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_run_audit_logs(self, run_id: str) -> List[Dict]:
+        """按 run_id 查询单次运行的完整审计日志。"""
+        rows = self._conn.execute(
+            "SELECT * FROM audit_logs WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_recent_runs(self, limit: int = 10) -> List[Dict]:
+        """获取最近的 N 次运行摘要。
+
+        Returns:
+            [{run_id, node_count, first_ts, last_ts}]
+        """
+        rows = self._conn.execute(
+            "SELECT run_id, COUNT(*) AS node_count, "
+            "MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts "
+            "FROM audit_logs WHERE run_id != '' "
+            "GROUP BY run_id ORDER BY first_ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def close(self) -> None:
         """关闭连接。"""
         self._conn.close()
+
+
+# ---- 全局单例 ----
+
+_store: Optional[SqliteStore] = None
+
+
+def get_store() -> SqliteStore:
+    """获取全局 SQLite 存储单例。"""
+    global _store
+    if _store is None:
+        _store = SqliteStore()
+    return _store
