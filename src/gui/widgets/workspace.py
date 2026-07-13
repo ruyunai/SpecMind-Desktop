@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 from PySide6.QtCore import Qt, Signal
+from pathlib import Path
 
 
 class WorkspacePanel(QWidget):
