@@ -7,7 +7,7 @@ import sqlite3
 import json
 import time
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from core.logger import setup_logger
@@ -28,17 +28,20 @@ class SqliteStore:
     from core import get_data_dir
     _DEFAULT_DB = str(get_data_dir() / "specmind.db")
 
-    def __init__(self, db_path: str = "") -> None:
+    def __init__(self, db_path: str = "", retention_days: int = 90) -> None:
         """初始化 SQLite 数据库。
 
         Args:
             db_path: 数据库文件路径（默认使用项目根 data/specmind.db）
+            retention_days: 审计日志保留天数（默认 90 天，到期自动清理）
         """
         if not db_path:
             db_path = self._DEFAULT_DB
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self.retention_days = retention_days
+        self._last_cleanup = 0.0  # time.monotonic 时间戳，节流清理
         self._init_tables()
         logger.info("SQLite 初始化: db=%s", db_path)
 
@@ -442,6 +445,47 @@ class SqliteStore:
              datetime.now().isoformat()),
         )
         self._conn.commit()
+
+        # 机会性清理：最多每小时扫描一次过期日志
+        now = time.monotonic()
+        if now - self._last_cleanup > 3600:
+            self._cleanup_expired_logs()
+            self._last_cleanup = now
+
+    def _cleanup_expired_logs(self) -> int:
+        """清理超过 retention_days 天的过期审计日志。
+
+        Returns:
+            删除的记录数
+        """
+        cutoff = (datetime.now() - timedelta(days=self.retention_days)).isoformat()
+
+        cursor = self._conn.execute(
+            "DELETE FROM audit_logs WHERE timestamp < ?", (cutoff,)
+        )
+        self._conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info("审计日志清理: 删除 %d 条超过 %d 天的记录 (cutoff=%s)",
+                        deleted, self.retention_days, cutoff[:10])
+        return deleted
+
+    def cleanup_audit_logs(self, retention_days: int | None = None) -> int:
+        """手动触发审计日志清理。
+
+        Args:
+            retention_days: 覆盖默认保留天数（None 则用构造函数的值）
+        Returns:
+            删除的记录数
+        """
+        if retention_days is not None:
+            original = self.retention_days
+            self.retention_days = retention_days
+            try:
+                return self._cleanup_expired_logs()
+            finally:
+                self.retention_days = original
+        return self._cleanup_expired_logs()
 
     def get_audit_logs(self, node_name: Optional[str] = None) -> List[Dict]:
         """查询审计日志。"""
