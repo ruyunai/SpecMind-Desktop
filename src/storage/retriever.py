@@ -165,3 +165,68 @@ class HybridRetriever:
             return 0.0
         sims = [r.get("similarity", 0.0) for r in results if r.get("similarity") is not None]
         return sum(sims) / len(sims) if sims else 0.0
+
+    def retrieve_multi_query(
+        self,
+        queries: List[str],
+        category: AssetCategory,
+        top_k: int = 5,
+        vector_top_k: int = 10,
+        bm25_top_k: int = 10,
+    ) -> Dict:
+        """多查询混合检索：对多个变体分别检索，合并后 RRF 重排。
+
+        方案 D（LLM 增强查询改写）的配套方法。将 LLM 生成的 2-4 个查询变体
+        分别检索，合并去重后统一 RRF 重排，取最终 Top-K。
+
+        Args:
+            queries: 查询变体列表（至少 1 个）
+            category: 资产类别
+            top_k: 最终返回结果数
+            vector_top_k: 每变体向量召回数
+            bm25_top_k: 每变体 BM25 召回数
+
+        Returns:
+            同 retrieve() 的返回格式
+        """
+        self._ensure_stores()
+
+        if isinstance(category, str):
+            from storage.schema import AssetCategory
+            category = AssetCategory(category)
+
+        all_vector = []
+        all_bm25 = []
+
+        for q in queries:
+            if not q or not q.strip():
+                continue
+            # 向量检索
+            try:
+                vec = self._chroma.query(query_text=q, category=category, top_k=vector_top_k)
+                all_vector.extend(vec)
+            except Exception as e:
+                logger.warning("多查询向量检索失败 (query=%s...): %s", q[:30], e)
+
+            # BM25 检索
+            try:
+                bm = self._sqlite.search_fts(query=q, category=category.value, top_k=bm25_top_k)
+                all_bm25.extend(bm)
+            except Exception as e:
+                logger.warning("多查询 BM25 检索失败 (query=%s...): %s", q[:30], e)
+
+        logger.info("多查询: %d 变体, 向量=%d 条, BM25=%d 条",
+                    len(queries), len(all_vector), len(all_bm25))
+
+        # RRF 融合（合并所有变体的结果）
+        fused = self._rrf_fuse(all_vector, all_bm25, top_k=top_k)
+        logger.info("多查询 RRF 融合后: %d 条", len(fused))
+
+        avg_sim = self._calc_avg_similarity(fused)
+        low_conf = avg_sim < self.SIMILARITY_THRESHOLD if fused else True
+
+        return {
+            "results": fused,
+            "avg_similarity": avg_sim,
+            "low_confidence": low_conf,
+        }

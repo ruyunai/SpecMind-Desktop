@@ -22,19 +22,34 @@ KEYWORD_DICTS = {
         "作业": ["作业批改", "作业提交", "在线作业"],
         "支付": ["课程购买", "订单管理", "在线支付"],
         "数据": ["数据看板", "数据分析", "BI"],
+        "人脸识别": ["生物特征", "人脸", "面部识别"],
+        "并发": ["并发数", "10万并发", "性能"],
+        "AI推荐": ["智能推荐", "个性化推荐"],
     },
     "legal_agent": {
-        "未成年人": ["K12", "学生", "儿童", "青少年"],
-        "数据出境": ["境外", "海外", "跨境"],
-        "人脸识别": ["生物特征", "人脸", "面部"],
-        "终身免费": ["绝对化用语", "广告法"],
-        "个人信息": ["用户数据", "学生信息", "隐私"],
+        "未成年人": ["K12", "学生", "儿童", "青少年", "14岁", "未满十四", "十四周岁", "监护人"],
+        "数据出境": ["境外", "海外", "跨境", "数据传输"],
+        "人脸识别": ["敏感个人信息", "生物识别", "个人信息保护法", "面部", "生物特征"],
+        "终身免费": ["绝对化用语", "广告法", "最高级", "绝对化"],
+        "个人信息": ["用户数据", "学生信息", "隐私", "用户信息", "个人信息保护法"],
+        "撤回": ["撤回同意", "取消授权"],
+        "网络游戏": ["游戏", "防沉迷", "时间限制"],
+        "保密": ["保密义务", "泄露", "网络安全"],
+        "分级": ["分类分级", "重要数据", "数据安全", "数据安全法"],
+        "授权": ["单独同意", "同意", "监护人同意"],
     },
     "contract_agent": {
-        "源代码": ["源码", "代码交付", "知识产权"],
-        "免费维护": ["维护期", "保修", "售后服务"],
-        "并发": ["并发数", "并发能力", "性能"],
+        "源代码": ["源码", "代码交付", "知识产权", "著作权"],
+        "免费维护": ["维护期", "保修", "售后服务", "维护费", "续签"],
+        "并发": ["并发数", "并发能力", "性能", "10万并发"],
         "定制": ["定制开发", "个性化", "定制功能"],
+        "P1": ["严重故障", "故障分级", "响应时间", "15分钟"],
+        "SLA": ["服务等级", "可用性", "99.9", "服务承诺"],
+        "维护费": ["维护费率", "15%", "续签价格", "年费"],
+        "违约": ["逾期", "违约金", "赔偿", "延迟交付"],
+        "保密": ["保密期限", "五年", "保密义务"],
+        "验收": ["验收标准", "验收节点", "需求规格"],
+        "支付": ["预付款", "验收款", "尾款", "支付节点"],
     },
 }
 
@@ -129,8 +144,8 @@ def _extract_keywords(text: str) -> List[str]:
             continue
         if len(token) < 2:
             continue
-        # 过滤纯数字
-        if token.isdigit():
+        # 保留 2 位以上数字（如"14"有语义意义），只过滤单字符数字
+        if token.isdigit() and len(token) < 2:
             continue
         keywords.append(token)
 
@@ -150,3 +165,52 @@ def rewrite_for_legal(cleaned_requirements: str) -> str:
 def rewrite_for_contract(prd_text: str) -> str:
     """Contract Agent 专属查询改写 - 提取条款关键词。"""
     return rewrite_query(prd_text, "contract_agent")
+
+
+# ============================================================
+# 方案 D：LLM 增强查询改写
+# ============================================================
+
+_LLM_EXPAND_PROMPT = """\
+你是一个查询改写助手。请将以下检索查询改写为 2-3 个语义等价但措辞不同的变体，用于提高向量库检索召回率。直接返回 JSON 字符串数组，不要加任何解释。
+
+查询：{query}
+"""
+
+
+def llm_expand_query(original_query: str, agent_key: str = "sar") -> list:
+    """用 LLM 将查询改写为多个语义等价变体，提高召回率。
+
+    Args:
+        original_query: 已通过关键词词典改写后的查询
+        agent_key: Agent 标识（用于 LLM 路由）
+
+    Returns:
+        至少包含原查询 + LLM 变体的查询列表，失败时仅返回原查询
+    """
+    if not original_query or not original_query.strip():
+        return [original_query]
+
+    try:
+        from agents.llm_client import invoke_llm
+        prompt = _LLM_EXPAND_PROMPT.format(query=original_query)
+        reply = invoke_llm(agent_key, prompt)
+
+        import json
+        from agents.mock_agents import _extract_json
+        data = _extract_json(reply)
+        if isinstance(data, list) and len(data) >= 1:
+            variants = [str(v).strip() for v in data if v and str(v).strip()]
+            if original_query not in variants:
+                variants.insert(0, original_query)
+            result = variants[:4]
+            logger.info("[%s] LLM 查询扩展: %d 个变体",
+                        agent_key, len(result))
+            return result
+
+        logger.warning("[%s] LLM 查询扩展返回格式异常，回退原查询: %s...",
+                       agent_key, reply[:80])
+    except Exception as e:
+        logger.warning("[%s] LLM 查询扩展失败，回退原查询: %s", agent_key, e)
+
+    return [original_query]

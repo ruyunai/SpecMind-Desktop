@@ -42,5 +42,10 @@ xref-*.html
 *.coverage
 htmlcov/
 
+# Local test data (not for git)
+测试/
+测评.md
+prompts_review.txt
+
 # Trae
 .trae/

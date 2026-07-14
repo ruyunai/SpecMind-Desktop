@@ -9,7 +9,7 @@ import time
 from typing import Dict, List, Optional
 
 from agents.state import SpecMindState, RiskLevel, FeatureTag
-from agents.query_rewriter import rewrite_for_sar, rewrite_for_legal, rewrite_for_contract
+from agents.query_rewriter import rewrite_for_sar, rewrite_for_legal, rewrite_for_contract, llm_expand_query
 from agents.prompts import build_sar_prompt, build_legal_prompt, build_contract_prompt
 from agents.confidence import assess_confidence, get_degrade_message, should_block_workflow
 from storage.retriever import HybridRetriever
@@ -28,6 +28,39 @@ def get_retriever() -> HybridRetriever:
     if _retriever is None:
         _retriever = HybridRetriever()
     return _retriever
+
+
+def _retrieve_with_expansion(
+    rewritten_query: str,
+    category: AssetCategory,
+    agent_key: str,
+    top_k: int = 5,
+) -> dict:
+    """查询改写 + LLM 扩展 + 多查询检索（方案 D）。
+
+    流程：
+    1. 用 LLM 将关键词改写后的查询扩展为 2-4 个语义变体
+    2. 多查询并行检索 → RRF 融合 → Top-K
+    3. LLM 失败时退回到单查询 `retrieve()`
+
+    Args:
+        rewritten_query: 已通过关键词词典改写后的查询
+        category: 资产类别
+        agent_key: Agent 标识
+        top_k: 返回数
+
+    Returns:
+        同 HybridRetriever.retrieve() 的返回格式
+    """
+    # LLM 扩展查询变体
+    queries = llm_expand_query(rewritten_query, agent_key)
+
+    if len(queries) > 1:
+        logger.info("[%s] 多查询检索: %d 个变体", agent_key, len(queries))
+        return get_retriever().retrieve_multi_query(queries, category, top_k=top_k)
+
+    # 单查询回退
+    return get_retriever().retrieve(queries[0], category, top_k=top_k)
 
 
 def _make_snapshot(node_name: str, start_time: float = None) -> dict:
@@ -98,7 +131,7 @@ def sar_agent_rag(state: SpecMindState) -> dict:
 
     # 2. 检索标准功能库
     try:
-        retrieval = get_retriever().retrieve(rewritten, AssetCategory.STANDARD_FEATURE, top_k=5)
+        retrieval = _retrieve_with_expansion(rewritten, AssetCategory.STANDARD_FEATURE, "sar", top_k=5)
         results = retrieval["results"]
         logger.info("[SAR Agent-RAG] 标准功能检索: %d 条, 平均相似度=%.3f",
                     len(results), retrieval["avg_similarity"])
@@ -168,7 +201,7 @@ def legal_agent_rag(state: SpecMindState) -> dict:
 
     # 2. 检索法规库
     try:
-        retrieval = get_retriever().retrieve(rewritten, AssetCategory.REGULATION, top_k=5)
+        retrieval = _retrieve_with_expansion(rewritten, AssetCategory.REGULATION, "legal", top_k=5)
         results = retrieval["results"]
         logger.info("[Legal Agent-RAG] 法规检索: %d 条, 平均相似度=%.3f",
                     len(results), retrieval["avg_similarity"])
@@ -284,7 +317,7 @@ def contract_agent_rag(state: SpecMindState) -> dict:
 
     # 2. 检索合同模板库
     try:
-        retrieval = get_retriever().retrieve(rewritten, AssetCategory.CONTRACT_TEMPLATE, top_k=5)
+        retrieval = _retrieve_with_expansion(rewritten, AssetCategory.CONTRACT_TEMPLATE, "contract", top_k=5)
         results = retrieval["results"]
         logger.info("[Contract Agent-RAG] 模板检索: %d 条, 平均相似度=%.3f",
                     len(results), retrieval["avg_similarity"])

@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 # 项目根目录
 PROJ_ROOT = Path(SPECPATH)  # SPECPATH 由 PyInstaller 提供 = .spec 所在目录
 
-# ---- 自动收集 chromadb 全部子模块/数据/二进制 ----
+# ---- 自动收集 chromadb / pdfplumber 全部子模块/数据/二进制 ----
 # chromadb 内部有大量动态导入（posthog/telemetry/onnx 等），
 # 手动列举 hiddenimports 容易遗漏，用 collect_all 一次性收集
 chromadb_datas, chromadb_binaries, chromadb_hiddenimports = collect_all('chromadb')
@@ -52,7 +52,6 @@ a = Analysis(
         "PySide6.QtSvgWidgets",
         "PySide6.QtNetwork",
         "PySide6.QtPrintSupport",
-
         # --- LangGraph ---
         "langgraph",
         "langgraph.graph",
@@ -156,6 +155,8 @@ a = Analysis(
         "agents.mock_agents",
         "agents.rag_agents",
         "agents.prompts",
+        "agents.prompt_helpers",
+        "agents.llm_client",
         "agents.confidence",
         "agents.query_rewriter",
         "storage",
