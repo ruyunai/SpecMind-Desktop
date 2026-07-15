@@ -100,23 +100,202 @@ New-Item -Path E:\SpecMindDesktop\portable.dat -ItemType File
 
 ## 🏗️ 项目架构
 
-```
-脏需求 → SAR Agent（清洗）→ Legal Agent（合规预检 + Interrupt 阻断）
-                              ↓ 低风险 / 用户确认放行
-                            PM Agent（生成 PRD 8 模块）
-                              ↓
-              ┌───────────────┼───────────────┐
-              ↓               ↓               ↓
-        Commercial        Contract         Review
-        （双报价）        （合同比对）     （Tech/Design/QA 评审）
-              └───────────────┴───────────────┘
-                              ↓
-                        Planner Agent（交付计划）
+### 1. 整体架构（六层分离）
+
+```mermaid
+graph TD
+    subgraph GUI["🖥 GUI 层 · PySide6 6.11"]
+        Left["左栏：企业资产库<br/>QTreeView + ChromaStore<br/>上传/删除/检索/详情"]
+        Mid["中栏：工作区三 Tab<br/>QTabWidget<br/>需求输入 / PRD 预览 / 附件导出"]
+        Right["右栏：LangGraph 画布<br/>节点状态 + 拓扑图 + 实时日志"]
+        Left ~~~ Mid ~~~ Right
+    end
+
+    subgraph Core["⚙ Core 层 · 编排与基础设施"]
+        Orch["Orchestrator<br/>QThread + LangGraph stream<br/>Interrupt 阻断 + 人工确认"]
+        Cfg["Config<br/>AppConfig + AgentModelConfig<br/>CostConfig 报价参数"]
+        Crypto["Crypto<br/>Fernet + PBKDF2 + 机器绑定<br/>旧格式自动迁移"]
+        Log["Logger<br/>RotatingFileHandler 5MB×3<br/>JSON Lines 结构化日志"]
+    end
+
+    subgraph Agent["🤖 Agent 层 · 7 个 LangGraph 节点"]
+        SAR["SAR Agent<br/>RAG 增强 · 需求清洗"]
+        Legal["Legal Agent<br/>RAG 增强 · 合规预检"]
+        PM["PM Agent<br/>LLM · PRD 生成"]
+        Comm["Commercial Agent<br/>公式驱动 · 双报价"]
+        Contract["Contract Agent<br/>RAG 增强 · 合同比对"]
+        Review["Review Agent<br/>LLM · Tech/Design/QA 评审"]
+        Planner["Planner Agent<br/>LLM · 交付计划"]
+    end
+
+    subgraph Graph["🔗 Graph 层 · LangGraph 0.2.34"]
+        SG["StateGraph<br/>条件边 + fan-out/fan-in"]
+        CP["SqliteSaver Checkpoint<br/>State 持久化 + 回溯"]
+        Route["条件路由<br/>Legal 高风险 -> END<br/>低风险 -> PM"]
+    end
+
+    subgraph Storage["💾 Storage 层 · 本地优先"]
+        Chroma["ChromaDB 1.5.9<br/>向量资产库<br/>bge-m3 嵌入 + hash 去重"]
+        SQLite["SQLite<br/>FTS5 BM25 (trigram)<br/>审计日志 + 资产表"]
+        CKPT["Checkpoint SQLite<br/>LangGraph State 快照"]
+        FLog["应用日志<br/>RotatingFileHandler<br/>specmind.log / .jsonl"]
+        Enc["加密存储<br/>secrets.enc<br/>Fernet 加密 API Key"]
+    end
+
+    subgraph Parsers["📄 Parsers 层 · 文档解析"]
+        DocParser["doc_parser<br/>.docx / .pdf / .txt / .json"]
+        Chunker["chunker<br/>法条按条 / 合同按款<br/>PRD 按 8 模块"]
+    end
+
+    GUI --> Core
+    Core --> Graph
+    Graph --> Agent
+    Agent --> Storage
+    Parsers --> Storage
+    Agent -->|LLM 调用| LLM["DeepSeek API<br/>OpenAI 兼容协议<br/>3 次重试 + 指数退避"]
+    SAR -->|RAG| Chroma
+    Legal -->|RAG| Chroma
+    Legal -->|RAG| SQLite
+    Contract -->|RAG| Chroma
+    Contract -->|RAG| SQLite
 ```
 
 **技术栈**：PySide6 + LangGraph 0.2 + ChromaDB + SQLite FTS5 + DeepSeek API + PyInstaller
 
-📖 **详细架构文档**：[memory-bank/架构设计.md](memory-bank/架构设计.md)
+### 2. LangGraph Agent 工作流
+
+```mermaid
+flowchart LR
+    START((START)) --> SAR["🧹 SAR Agent<br/>需求清洗<br/>RAG 增强"]
+
+    SAR --> Legal["⚖ Legal Agent<br/>合规预检<br/>RAG 增强"]
+
+    Legal -->|legal_blocked=true| Interrupt{{"⛔ Interrupt<br/>高风险人工确认<br/>threading.Event"}}
+    Legal -->|legal_blocked=false<br/>低风险放行| PM["📝 PM Agent<br/>PRD 生成<br/>LLM 驱动"]
+
+    Interrupt -->|用户拒绝| END1((END 终止))
+    Interrupt -->|用户强制放行| Resume["🔄 Resume 图<br/>从 PM 继续执行"]
+
+    PM --> FanOut{"fan-out<br/>并行执行"}
+    Resume --> FanOut
+
+    FanOut --> Comm["💰 Commercial<br/>双报价<br/>公式驱动"]
+    FanOut --> Cntr["📋 Contract<br/>合同比对<br/>RAG 增强"]
+    FanOut --> Rev["🔍 Review<br/>三维评审<br/>LLM 驱动"]
+
+    Comm --> FanIn{"fan-in"}
+    Cntr --> FanIn
+    Rev --> FanIn
+
+    FanIn --> Planner["📅 Planner Agent<br/>交付计划<br/>LLM 驱动"]
+    Planner --> END2((END 完成))
+
+    subgraph Checkpoint["SqliteSaver 持久化"]
+        CP_Entry["节点 entry<br/>State 快照"]
+        CP_Exit["节点 exit<br/>State 快照 + elapsed_ms"]
+    end
+
+    SAR -.->|审计| CP_Entry
+    SAR -.->|审计| CP_Exit
+    Legal -.->|审计| CP_Entry
+    Legal -.->|审计| CP_Exit
+
+    style Interrupt fill:#ff6b6b,stroke:#c0392b,color:#fff
+    style END1 fill:#e74c3c,stroke:#c0392b,color:#fff
+    style END2 fill:#27ae60,stroke:#1e8449,color:#fff
+```
+
+### 3. RAG 混合检索架构
+
+```mermaid
+graph LR
+    subgraph Upload["📤 文档上传管线"]
+        File["文件选择<br/>.docx/.pdf/.txt/.json"]
+        Parse["doc_parser<br/>统一解析入口"]
+        Chunk["chunker<br/>结构化分块"]
+        Embed["ChromaDB<br/>bge-m3 嵌入"]
+        Store["入库<br/>hash 去重<br/>_flatten_meta"]
+        File --> Parse --> Chunk --> Embed --> Store
+    end
+
+    subgraph Query["🔍 查询检索管线"]
+        Input["用户查询"]
+        QR["query_rewriter<br/>词典改写<br/>+ LLM 扩展"]
+        LLM_Expand["方案 D: llm_expand_query<br/>LLM 生成 2-4 个<br/>语义等价变体"]
+        MultiQ["retrieve_multi_query<br/>多查询并行检索"]
+        Vec["向量检索<br/>ChromaDB<br/>Top 10"]
+        BM25["BM25 检索<br/>SQLite FTS5<br/>trigram 分词<br/>Top 10"]
+        RRF["RRF 融合<br/>k=60 重排"]
+        Conf["置信度评估<br/>avg≥0.75 high<br/>0.6-0.75 medium<br/>0.4-0.6 low 降级<br/><0.4 empty 强降级"]
+        Degrade["降级策略<br/>低置信度：KB>LLM<br/>空检索：LLM 自判定"]
+        Input --> QR --> LLM_Expand --> MultiQ
+        MultiQ --> Vec
+        MultiQ --> BM25
+        Vec --> RRF
+        BM25 --> RRF
+        RRF --> Conf --> Degrade
+    end
+
+    subgraph Agents["RAG Agent 消费"]
+        SAR_A["SAR Agent<br/>检索标准功能库"]
+        Legal_A["Legal Agent<br/>检索法规库"]
+        Contract_A["Contract Agent<br/>检索合同模板库"]
+    end
+
+    Store -.-> Vec
+    Store -.-> BM25
+    Degrade --> SAR_A
+    Degrade --> Legal_A
+    Degrade --> Contract_A
+```
+
+### 4. 评测体系（三指标 + CI 门禁）
+
+```mermaid
+graph LR
+    subgraph Dataset["评测数据集"]
+        EDS["eval_dataset.json<br/>25 条用例<br/>5 分类: SAR/Legal/Contract/<br/>PM/Review"]
+        GroundTruth["标注数据<br/>期望关键词 + 期望分类<br/>期望 risk_level"]
+    end
+
+    subgraph Pipeline["评测管线"]
+        Upload["构建知识库<br/>clean_knowledge_base()<br/>种子数据入库"]
+        RunEval["run_eval.py<br/>执行评测"]
+        Recall["Recall@5<br/>检索 Top-5 命中率<br/>文本 + source 双检查"]
+        PromptSafe["Prompt 安全性<br/>RAG: 身份+防注入+溯源<br/>Legal: 免责声明<br/>非RAG: 身份+防注入"]
+        ConfRate["置信度降级率<br/>低置信度场景<br/>KB>LLM 优先级验证"]
+        Upload --> RunEval
+        RunEval --> Recall
+        RunEval --> PromptSafe
+        RunEval --> ConfRate
+    end
+
+    subgraph Thresholds["CI 门禁阈值"]
+        T1["Recall@5 ≥ 0.85"]
+        T2["Prompt 安全 ≥ 0.90"]
+        T3["置信度降级率 ≥ 0.90"]
+        T4["5/5 项全通过 -> exit(0)"]
+        T5["任一不通过 -> exit(1)"]
+    end
+
+    subgraph Report["评测报告"]
+        Rpt["eval_report_YYYYMMDD.md<br/>25 条用例明细<br/>每条: 命中/缺失/建议<br/>三指标汇总 + 优化建议"]
+    end
+
+    Dataset --> Pipeline
+    Pipeline --> Thresholds
+    Pipeline --> Report
+
+    style T1 fill:#27ae60,stroke:#1e8449,color:#fff
+    style T2 fill:#27ae60,stroke:#1e8449,color:#fff
+    style T3 fill:#27ae60,stroke:#1e8449,color:#fff
+```
+
+**当前指标**：Recall@5 = 0.92 ✅ ｜ Prompt 安全 = 1.00 ✅ ｜ 置信度降级率 = 1.00 ✅
+
+📖 **完整 10 张架构图**：[docs/架构设计_Mermaid图集.md](docs/架构设计_Mermaid图集.md)（含 State 管理 / 数据流 / 存储分层 / 加密 / 模型路由 / 打包部署等 6 张图）
+
+📖 **架构设计说明文档**：[memory-bank/架构设计.md](memory-bank/架构设计.md)
 
 ---
 
@@ -126,6 +305,9 @@ New-Item -Path E:\SpecMindDesktop\portable.dat -ItemType File
 |------|------|
 | [docs/deploy.md](docs/deploy.md) | 完整部署操作手册（12 节 + 2 附录） |
 | [docs/usage.md](docs/usage.md) | 7 步使用指南 |
+| [docs/架构设计_Mermaid图集.md](docs/架构设计_Mermaid图集.md) | 10 张 Mermaid 架构图（整体架构/工作流/RAG/State/数据流/存储/加密/路由/打包/评测） |
+| [docs/skill数据报告.md](docs/skill数据报告.md) | 4 个 AI Skill 使用数据报告（效率提升 66% / 32 Bug 修复归档 / 三指标提升） |
+| [docs/eval_report_20260714.md](docs/eval_report_20260714.md) | RAG 评测报告（25 条用例 / Recall@5=0.92 / Prompt=1.00） |
 | [AGENTS.md](AGENTS.md) | AI 编程代理工作指南（含代码规范、约束） |
 | [memory-bank/](memory-bank/) | 项目记忆库（架构 / 状态 / 进度 / 修复日志） |
 
